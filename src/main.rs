@@ -27,7 +27,7 @@ async fn main() -> std::io::Result<ExitCode> {
     };
     let mut stdout = BufReader::new(p.stdout.take().expect("Child.stdout should be Some")).lines();
     let mut stderr = BufReader::new(p.stderr.take().expect("Child.stderr should be Some")).lines();
-
+    print_elapsed(start)?;
     loop {
         tokio::select! {
             _ = ticker.tick() => {
