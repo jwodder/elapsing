@@ -22,6 +22,7 @@ async fn main() -> anyhow::Result<ExitCode> {
         .args(argv)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
+        .kill_on_drop(true)
         .spawn()
         .context("failed to start command")?;
     let mut stdout = BufReader::new(p.stdout.take().expect("Child.stdout should be Some")).lines();
