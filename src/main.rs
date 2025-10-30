@@ -1,5 +1,5 @@
 #![allow(clippy::todo)]
-use std::io::{stderr, stdout, Write};
+use std::io::{self, Write};
 use std::process::{ExitCode, Stdio};
 use std::time::{Duration, Instant};
 use tokio::{
@@ -9,7 +9,7 @@ use tokio::{
 };
 
 #[tokio::main(flavor = "current_thread")]
-async fn main() -> std::io::Result<ExitCode> {
+async fn main() -> io::Result<ExitCode> {
     let mut argv = std::env::args_os();
     let _ = argv.next();
     let Some(command) = argv.next() else {
@@ -38,7 +38,7 @@ async fn main() -> std::io::Result<ExitCode> {
                 match r {
                     Ok(Some(line)) => {
                         clear_elapsed_line()?;
-                        println!("{line}"); // TODO: Check for IO errors
+                        writeln!(io::stdout().lock(), "{line}")?;
                         print_elapsed(start)?;
                     }
                     Ok(None) => (),
@@ -49,7 +49,7 @@ async fn main() -> std::io::Result<ExitCode> {
                 match r {
                     Ok(Some(line)) => {
                         clear_elapsed_line()?;
-                        eprintln!("{line}"); // TODO: Check for IO errors
+                        writeln!(io::stderr().lock(), "{line}")?;
                         print_elapsed(start)?;
                     }
                     Ok(None) => (),
@@ -74,14 +74,14 @@ async fn main() -> std::io::Result<ExitCode> {
     }
 }
 
-fn clear_elapsed_line() -> std::io::Result<()> {
-    let mut err = stderr().lock();
+fn clear_elapsed_line() -> io::Result<()> {
+    let mut err = io::stderr().lock();
     err.write_all(b"\r\x1B[K")?;
     err.flush()?;
     Ok(())
 }
 
-fn print_elapsed(start: Instant) -> std::io::Result<()> {
+fn print_elapsed(start: Instant) -> io::Result<()> {
     let elapsed = start.elapsed();
     let mut secs = elapsed.as_secs();
     let hours = secs / 3600;
@@ -89,7 +89,7 @@ fn print_elapsed(start: Instant) -> std::io::Result<()> {
     let minutes = secs / 60;
     secs %= 60;
     let s = format!("Elapsed: {hours:02}:{minutes:02}:{secs:02}");
-    let mut err = stdout().lock();
+    let mut err = io::stdout().lock();
     err.write_all(s.as_bytes())?;
     err.flush()?;
     Ok(())
