@@ -1,4 +1,4 @@
-#![allow(clippy::todo)]
+use anyhow::Context;
 use std::io::{self, Write};
 use std::process::{ExitCode, Stdio};
 use std::time::{Duration, Instant};
@@ -9,22 +9,21 @@ use tokio::{
 };
 
 #[tokio::main(flavor = "current_thread")]
-async fn main() -> io::Result<ExitCode> {
+async fn main() -> anyhow::Result<ExitCode> {
     let mut argv = std::env::args_os();
     let _ = argv.next();
     let Some(command) = argv.next() else {
-        todo!("Error");
+        writeln!(io::stderr().lock(), "Usage: elapsing command [args ...]")?;
+        return Ok(ExitCode::FAILURE);
     };
     let start = Instant::now();
     let mut ticker = interval(Duration::from_secs(1));
-    let Ok(mut p) = Command::new(command)
+    let mut p = Command::new(command)
         .args(argv)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-    else {
-        todo!("Error: failed to execute");
-    };
+        .context("failed to start command")?;
     let mut stdout = BufReader::new(p.stdout.take().expect("Child.stdout should be Some")).lines();
     let mut stderr = BufReader::new(p.stderr.take().expect("Child.stderr should be Some")).lines();
     print_elapsed(start)?;
@@ -42,7 +41,10 @@ async fn main() -> io::Result<ExitCode> {
                         print_elapsed(start)?;
                     }
                     Ok(None) => (),
-                    Err(_e) => todo!(),
+                    Err(e) => {
+                        clear_elapsed_line()?;
+                        return Err(e).context("error reading from process's stdout");
+                    }
                 }
             }
             r = stderr.next_line() => {
@@ -53,7 +55,10 @@ async fn main() -> io::Result<ExitCode> {
                         print_elapsed(start)?;
                     }
                     Ok(None) => (),
-                    Err(_e) => todo!(),
+                    Err(e) => {
+                        clear_elapsed_line()?;
+                        return Err(e).context("error reading from process's stderr");
+                    }
                 }
             }
             r = p.wait() => {
@@ -68,7 +73,10 @@ async fn main() -> io::Result<ExitCode> {
                             return Ok(ExitCode::FAILURE);
                         }
                     }
-                    Err(_e) => todo!(),
+                    Err(e) => {
+                        clear_elapsed_line()?;
+                        return Err(e).context("error waiting for process to terminate");
+                    }
                 }
             }
         }
