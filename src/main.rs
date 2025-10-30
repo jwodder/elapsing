@@ -64,6 +64,7 @@ async fn main() -> io::Result<ExitCode> {
                             let ret = u8::try_from(ret & 255).unwrap_or(1);
                             return Ok(ExitCode::from(ret));
                         } else {
+                            writeln!(io::stderr().lock(), "Process killed by signal: {rc}")?;
                             return Ok(ExitCode::FAILURE);
                         }
                     }
