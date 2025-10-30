@@ -76,7 +76,7 @@ async fn main() -> std::io::Result<ExitCode> {
 
 fn clear_elapsed_line() -> std::io::Result<()> {
     let mut err = stderr().lock();
-    err.write_all(b"\r")?;
+    err.write_all(b"\r\x1B[K")?;
     err.flush()?;
     Ok(())
 }
