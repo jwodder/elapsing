@@ -2,7 +2,7 @@
 name = "elapsing"
 version = "0.1.0-dev"
 edition = "2021"
-rust-version = "1.90"
+rust-version = "1.87"
 #description = ???
 authors = ["John Thorvald Wodder II <elapsing@varonathe.org>"]
 repository = "https://github.com/jwodder/elapsing"
