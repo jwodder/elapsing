@@ -43,10 +43,13 @@ fn main() -> ExitCode {
 #[tokio::main(flavor = "current_thread")]
 async fn run(mut cmd: Command) -> Result<ExitCode, Error> {
     let statline = StatusLine::new();
+    let stdout = io::stdout();
+    let stderr = io::stderr();
+    let stdout_is_tty = stdout.is_terminal();
     let mut ticker = interval(Duration::from_secs(1));
     let mut p = cmd.spawn().map_err(Error::Spawn)?;
-    let mut stdout = ByteLines::new(p.stdout.take().expect("Child.stdout should be Some"));
-    let mut stderr = ByteLines::new(p.stderr.take().expect("Child.stderr should be Some"));
+    let mut pout = ByteLines::new(p.stdout.take().expect("Child.stdout should be Some"));
+    let mut perr = ByteLines::new(p.stderr.take().expect("Child.stderr should be Some"));
     statline.print()?;
     loop {
         tokio::select! {
@@ -54,16 +57,20 @@ async fn run(mut cmd: Command) -> Result<ExitCode, Error> {
                 statline.clear()?;
                 statline.print()?;
             },
-            r = stdout.next_line() => {
-                statline.clear()?;
+            r = pout.next_line() => {
+                if stdout_is_tty {
+                    statline.clear()?;
+                }
                 let line = r.map_err(Error::ReadStdout)?;
-                io::stdout().lock().write_all(&line).map_err(Error::Write)?;
-                statline.print()?;
+                stdout.lock().write_all(&line).map_err(Error::Write)?;
+                if stdout_is_tty {
+                    statline.print()?;
+                }
             }
-            r = stderr.next_line() => {
+            r = perr.next_line() => {
                 statline.clear()?;
                 let line = r.map_err(Error::ReadStderr)?;
-                io::stderr().lock().write_all(&line).map_err(Error::Write)?;
+                stderr.lock().write_all(&line).map_err(Error::Write)?;
                 statline.print()?;
             }
             r = p.wait() => {
@@ -199,7 +206,7 @@ impl<R: AsyncRead + Unpin> Future for NextLine<'_, R> {
 
 #[derive(Debug, Error)]
 enum Error {
-    #[error("failed to spawn child process")]
+    #[error("failed to spawn child process: {0}")]
     Spawn(io::Error),
     #[error(transparent)]
     Write(io::Error),
