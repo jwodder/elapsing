@@ -25,8 +25,12 @@ async fn main() -> anyhow::Result<ExitCode> {
         .kill_on_drop(true)
         .spawn()
         .context("failed to start command")?;
-    let mut stdout = BufReader::new(p.stdout.take().expect("Child.stdout should be Some")).lines();
-    let mut stderr = BufReader::new(p.stderr.take().expect("Child.stderr should be Some")).lines();
+    let mut stdout = BufReader::new(p.stdout.take().expect("Child.stdout should be Some"));
+    let mut outbuf = Vec::new();
+    let mut outeof = false;
+    let mut stderr = BufReader::new(p.stderr.take().expect("Child.stderr should be Some"));
+    let mut errbuf = Vec::new();
+    let mut erreof = false;
     print_elapsed(start)?;
     loop {
         tokio::select! {
@@ -34,28 +38,30 @@ async fn main() -> anyhow::Result<ExitCode> {
                 clear_elapsed_line()?;
                 print_elapsed(start)?;
             },
-            r = stdout.next_line() => {
+            r = stdout.read_until(b'\n', &mut outbuf), if !outeof => {
                 match r {
-                    Ok(Some(line)) => {
+                    Ok(_) if !outbuf.is_empty() => {
                         clear_elapsed_line()?;
-                        writeln!(io::stdout().lock(), "{line}")?;
+                        io::stdout().lock().write_all(&outbuf)?;
                         print_elapsed(start)?;
+                        outbuf.clear();
                     }
-                    Ok(None) => (),
+                    Ok(_) => outeof = true,
                     Err(e) => {
                         clear_elapsed_line()?;
                         return Err(e).context("error reading from process's stdout");
                     }
                 }
             }
-            r = stderr.next_line() => {
+            r = stderr.read_until(b'\n', &mut errbuf), if !erreof => {
                 match r {
-                    Ok(Some(line)) => {
+                    Ok(_) if !errbuf.is_empty() => {
                         clear_elapsed_line()?;
-                        writeln!(io::stderr().lock(), "{line}")?;
+                        io::stderr().lock().write_all(&errbuf)?;
                         print_elapsed(start)?;
+                        errbuf.clear();
                     }
-                    Ok(None) => (),
+                    Ok(_) => erreof = true,
                     Err(e) => {
                         clear_elapsed_line()?;
                         return Err(e).context("error reading from process's stderr");
