@@ -1,0 +1,160 @@
+name: Test
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  schedule:
+    - cron: '0 12 * * *'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+        toolchain:
+          - msrv
+          - stable
+          - beta
+          - nightly
+        include:
+          - os: macos-latest
+            toolchain: stable
+          - os: windows-latest
+            toolchain: stable
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Install Rust
+        if: matrix.toolchain != 'msrv'
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.toolchain }}
+
+      - name: Determine minimum supported Rust version
+        if: matrix.toolchain == 'msrv'
+        id: msrv
+        run: |
+          rust_version="$(cargo metadata --no-deps --format-version=1 | jq -r '.packages[0].rust_version')"
+          echo "msrv=$rust_version" >> "$GITHUB_OUTPUT"
+
+      - name: Install minimum supported Rust version
+        if: matrix.toolchain == 'msrv'
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.msrv.outputs.msrv }}
+
+      - name: Activate cache
+        if: "!startsWith(github.head_ref, 'renovate/')"
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-hack
+        uses: taiki-e/install-action@cargo-hack
+
+      - name: Build crate
+        run: cargo hack --workspace --feature-powerset build --all-targets --verbose
+
+      - name: Test crate
+        run: cargo hack --workspace --feature-powerset test --verbose
+
+  minimal-versions:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+
+      - name: Install nightly Rust
+        # Needed by cargo-minimal-versions
+        run: rustup update nightly
+
+      - name: Activate cache
+        if: "!startsWith(github.head_ref, 'renovate/')"
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-hack and cargo-minimal-versions
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-hack,cargo-minimal-versions
+
+      - name: Build crate
+        run: cargo minimal-versions --direct --workspace --feature-powerset build --all-targets --verbose
+
+      - name: Test crate
+        run: cargo minimal-versions --direct --workspace --feature-powerset test --verbose
+
+  coverage:
+    # This is separate from the main tests because cargo-llvm-cov doesn't run
+    # doctests.
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+          components: llvm-tools
+
+      - name: Activate cache
+        if: "!startsWith(github.head_ref, 'renovate/')"
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov
+
+      - name: Test with coverage
+        run: cargo llvm-cov --workspace --all-features --lcov --output-path lcov.info
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          files: lcov.info
+          fail_ci_if_error: false
+          token: ${{ secrets.CODECOV_TOKEN }}
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+          components: clippy, rustfmt
+
+      - name: Activate cache
+        if: "!startsWith(github.head_ref, 'renovate/')"
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-hack
+        uses: taiki-e/install-action@cargo-hack
+
+      - name: Check code
+        run: cargo hack --workspace --feature-powerset clippy -- -Dwarnings
+
+      - name: Check tests & examples
+        run: cargo hack --workspace --feature-powerset clippy --tests --examples -- -Dwarnings
+
+      - name: Check formatting
+        run: cargo fmt --all --check
+
+# vim:set et sts=2:
