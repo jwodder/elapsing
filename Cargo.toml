@@ -3,14 +3,13 @@ name = "elapsing"
 version = "0.1.0-dev"
 edition = "2021"
 rust-version = "1.87"
-#description = ???
+description = "Show runtime while a command runs"
 authors = ["John Thorvald Wodder II <elapsing@varonathe.org>"]
 repository = "https://github.com/jwodder/elapsing"
 documentation = "https://github.com/jwodder/elapsing"
 license = "MIT"
-keywords = []
-# See <https://crates.io/category_slugs> for a list of categories
-categories = []
+keywords = ["runtime", "time"]
+categories = ["command-line-utilities"]
 exclude = ["/.*"]
 
 [dependencies]
