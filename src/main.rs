@@ -1,4 +1,5 @@
 use anyhow::Context as _;
+use std::ffi::OsString;
 use std::future::Future;
 use std::io::{self, Write};
 use std::pin::{pin, Pin};
@@ -13,23 +14,47 @@ use tokio::{
 
 const READ_BUFFER_SIZE: usize = 2048;
 
-#[tokio::main(flavor = "current_thread")]
-async fn main() -> anyhow::Result<ExitCode> {
+fn main() -> ExitCode {
     let mut argv = std::env::args_os();
-    let _ = argv.next();
+    let argv0 = argv
+        .next()
+        .unwrap_or_else(|| OsString::from("elapsing"))
+        .display()
+        .to_string();
     let Some(command) = argv.next() else {
-        writeln!(io::stderr().lock(), "Usage: elapsing command [args ...]")?;
-        return Ok(ExitCode::FAILURE);
+        let _ = writeln!(io::stderr().lock(), "Usage: {argv0} command [args ...]");
+        return ExitCode::FAILURE;
     };
-    let start = Instant::now();
-    let mut ticker = interval(Duration::from_secs(1));
-    let mut p = Command::new(command)
-        .args(argv)
+    let mut cmd = Command::new(command);
+    cmd.args(argv)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .kill_on_drop(true)
-        .spawn()
-        .context("failed to start command")?;
+        .kill_on_drop(true);
+    match run(cmd) {
+        Ok(code) => code,
+        Err(e) => {
+            // Unlike most uses of this idiom, don't go through e.chain()
+            // looking for a BrokenPipe, as we only want to check errors raised
+            // by failure to write to stdout/stderr, which are those for which
+            // the payload is io::Error.  If we were to go through e.chain(),
+            // then we might get false positives if reading from the child
+            // process failed with EPIPE (Can that even happen?  Not sure.)
+            if let Some(ioerr) = e.downcast_ref::<io::Error>() {
+                if ioerr.kind() == io::ErrorKind::BrokenPipe {
+                    return ExitCode::SUCCESS;
+                }
+            }
+            let _ = writeln!(io::stderr().lock(), "{argv0}: {e:?}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+#[tokio::main(flavor = "current_thread")]
+async fn run(mut cmd: Command) -> anyhow::Result<ExitCode> {
+    let start = Instant::now();
+    let mut ticker = interval(Duration::from_secs(1));
+    let mut p = cmd.spawn().context("failed to start command")?;
     let mut stdout = ByteLines::new(p.stdout.take().expect("Child.stdout should be Some"));
     let mut stderr = ByteLines::new(p.stderr.take().expect("Child.stderr should be Some"));
     print_elapsed(start)?;
