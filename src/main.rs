@@ -96,8 +96,7 @@ async fn run(mut cmd: Command) -> anyhow::Result<ExitCode> {
                             let ret = u8::try_from(ret & 255).unwrap_or(1);
                             return Ok(ExitCode::from(ret));
                         } else {
-                            writeln!(io::stderr().lock(), "Child process killed by signal: {rc}")?;
-                            return Ok(ExitCode::FAILURE);
+                            anyhow::bail!("Child process killed by signal: {rc}");
                         }
                     }
                     Err(e) => {
