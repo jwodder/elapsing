@@ -1,6 +1,6 @@
 use std::ffi::OsString;
 use std::future::Future;
-use std::io::{self, Write};
+use std::io::{self, IsTerminal, Write};
 use std::pin::{pin, Pin};
 use std::process::{ExitCode, ExitStatus, Stdio};
 use std::task::{ready, Context, Poll};
@@ -81,37 +81,46 @@ async fn run(mut cmd: Command) -> Result<ExitCode, Error> {
 }
 
 #[derive(Debug)]
-struct StatusLine {
-    start: Instant,
-    err: io::Stderr,
+enum StatusLine {
+    Active { start: Instant, err: io::Stderr },
+    Inactive,
 }
 
 impl StatusLine {
     fn new() -> StatusLine {
-        StatusLine {
-            start: Instant::now(),
-            err: io::stderr(),
+        let err = io::stderr();
+        if err.is_terminal() {
+            StatusLine::Active {
+                start: Instant::now(),
+                err,
+            }
+        } else {
+            StatusLine::Inactive
         }
     }
 
     fn clear(&self) -> Result<(), Error> {
-        let mut err = self.err.lock();
-        err.write_all(b"\r\x1B[K").map_err(Error::Write)?;
-        err.flush().map_err(Error::Write)?;
+        if let StatusLine::Active { ref err, .. } = self {
+            let mut err = err.lock();
+            err.write_all(b"\r\x1B[K").map_err(Error::Write)?;
+            err.flush().map_err(Error::Write)?;
+        }
         Ok(())
     }
 
     fn print(&self) -> Result<(), Error> {
-        let elapsed = self.start.elapsed();
-        let mut secs = elapsed.as_secs();
-        let hours = secs / 3600;
-        secs %= 3500;
-        let minutes = secs / 60;
-        secs %= 60;
-        let s = format!("Elapsed: {hours:02}:{minutes:02}:{secs:02}");
-        let mut err = self.err.lock();
-        err.write_all(s.as_bytes()).map_err(Error::Write)?;
-        err.flush().map_err(Error::Write)?;
+        if let StatusLine::Active { ref start, ref err } = self {
+            let elapsed = start.elapsed();
+            let mut secs = elapsed.as_secs();
+            let hours = secs / 3600;
+            secs %= 3500;
+            let minutes = secs / 60;
+            secs %= 60;
+            let s = format!("Elapsed: {hours:02}:{minutes:02}:{secs:02}");
+            let mut err = err.lock();
+            err.write_all(s.as_bytes()).map_err(Error::Write)?;
+            err.flush().map_err(Error::Write)?;
+        }
         Ok(())
     }
 }
