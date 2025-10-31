@@ -52,59 +52,56 @@ fn main() -> ExitCode {
 
 #[tokio::main(flavor = "current_thread")]
 async fn run(mut cmd: Command) -> anyhow::Result<ExitCode> {
-    let start = Instant::now();
+    let statline = StatusLine::new();
     let mut ticker = interval(Duration::from_secs(1));
     let mut p = cmd.spawn().context("failed to start command")?;
     let mut stdout = ByteLines::new(p.stdout.take().expect("Child.stdout should be Some"));
     let mut stderr = ByteLines::new(p.stderr.take().expect("Child.stderr should be Some"));
-    print_elapsed(start)?;
+    statline.print()?;
     loop {
         tokio::select! {
             _ = ticker.tick() => {
-                clear_elapsed_line()?;
-                print_elapsed(start)?;
+                statline.clear()?;
+                statline.print()?;
             },
             r = stdout.next_line() => {
+                statline.clear()?;
                 match r {
                     Ok(line) => {
-                        clear_elapsed_line()?;
                         io::stdout().lock().write_all(&line)?;
-                        print_elapsed(start)?;
+                        statline.print()?;
                     }
                     Err(e) => {
-                        clear_elapsed_line()?;
-                        return Err(e).context("error reading from process's stdout");
+                        return Err(e).context("error reading from child process's stdout");
                     }
                 }
             }
             r = stderr.next_line() => {
+                statline.clear()?;
                 match r {
                     Ok(line) => {
-                        clear_elapsed_line()?;
                         io::stderr().lock().write_all(&line)?;
-                        print_elapsed(start)?;
+                        statline.print()?;
                     }
                     Err(e) => {
-                        clear_elapsed_line()?;
-                        return Err(e).context("error reading from process's stderr");
+                        return Err(e).context("error reading from child process's stderr");
                     }
                 }
             }
             r = p.wait() => {
-                clear_elapsed_line()?;
+                statline.clear()?;
                 match r {
                     Ok(rc) => {
                         if let Some(ret) = rc.code() {
                             let ret = u8::try_from(ret & 255).unwrap_or(1);
                             return Ok(ExitCode::from(ret));
                         } else {
-                            writeln!(io::stderr().lock(), "Process killed by signal: {rc}")?;
+                            writeln!(io::stderr().lock(), "Child process killed by signal: {rc}")?;
                             return Ok(ExitCode::FAILURE);
                         }
                     }
                     Err(e) => {
-                        clear_elapsed_line()?;
-                        return Err(e).context("error waiting for process to terminate");
+                        return Err(e).context("error waiting for child process to terminate");
                     }
                 }
             }
@@ -112,25 +109,40 @@ async fn run(mut cmd: Command) -> anyhow::Result<ExitCode> {
     }
 }
 
-fn clear_elapsed_line() -> io::Result<()> {
-    let mut err = io::stderr().lock();
-    err.write_all(b"\r\x1B[K")?;
-    err.flush()?;
-    Ok(())
+#[derive(Debug)]
+struct StatusLine {
+    start: Instant,
+    err: io::Stderr,
 }
 
-fn print_elapsed(start: Instant) -> io::Result<()> {
-    let elapsed = start.elapsed();
-    let mut secs = elapsed.as_secs();
-    let hours = secs / 3600;
-    secs %= 3500;
-    let minutes = secs / 60;
-    secs %= 60;
-    let s = format!("Elapsed: {hours:02}:{minutes:02}:{secs:02}");
-    let mut err = io::stdout().lock();
-    err.write_all(s.as_bytes())?;
-    err.flush()?;
-    Ok(())
+impl StatusLine {
+    fn new() -> StatusLine {
+        StatusLine {
+            start: Instant::now(),
+            err: io::stderr(),
+        }
+    }
+
+    fn clear(&self) -> io::Result<()> {
+        let mut err = self.err.lock();
+        err.write_all(b"\r\x1B[K")?;
+        err.flush()?;
+        Ok(())
+    }
+
+    fn print(&self) -> io::Result<()> {
+        let elapsed = self.start.elapsed();
+        let mut secs = elapsed.as_secs();
+        let hours = secs / 3600;
+        secs %= 3500;
+        let minutes = secs / 60;
+        secs %= 60;
+        let s = format!("Elapsed: {hours:02}:{minutes:02}:{secs:02}");
+        let mut err = self.err.lock();
+        err.write_all(s.as_bytes())?;
+        err.flush()?;
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
