@@ -242,6 +242,7 @@ mod tests {
         use super::*;
         use std::io::Cursor;
         use tokio::time::timeout;
+        use tokio_test::io::Builder;
 
         #[tokio::test]
         async fn many_short_lines() {
@@ -261,6 +262,20 @@ mod tests {
             assert_eq!(lines.next_line().await.unwrap(), b"Hello!\n");
             assert_eq!(lines.next_line().await.unwrap(), b"I like your code.\n");
             assert_eq!(lines.next_line().await.unwrap(), b"Goodbye!");
+            let r = timeout(Duration::from_millis(100), lines.next_line()).await;
+            assert!(r.is_err());
+        }
+
+        #[tokio::test]
+        async fn split_line() {
+            let reader = Builder::new()
+                .read(b"Hello, ")
+                .read(b"World!\n")
+                .read(b"Bye now!\n")
+                .build();
+            let mut lines = ByteLines::new(reader);
+            assert_eq!(lines.next_line().await.unwrap(), b"Hello, World!\n");
+            assert_eq!(lines.next_line().await.unwrap(), b"Bye now!\n");
             let r = timeout(Duration::from_millis(100), lines.next_line()).await;
             assert!(r.is_err());
         }
