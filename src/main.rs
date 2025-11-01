@@ -1,9 +1,9 @@
 use std::ffi::OsString;
 use std::future::Future;
 use std::io::{self, IsTerminal, Write};
-use std::pin::{pin, Pin};
+use std::pin::{Pin, pin};
 use std::process::{ExitCode, ExitStatus, Stdio};
-use std::task::{ready, Context, Poll};
+use std::task::{Context, Poll, ready};
 use std::time::{Duration, Instant};
 use thiserror::Error;
 use tokio::{
@@ -107,7 +107,7 @@ impl StatusLine {
     }
 
     fn clear(&self) -> Result<(), Error> {
-        if let StatusLine::Active { ref err, .. } = self {
+        if let StatusLine::Active { err, .. } = self {
             let mut err = err.lock();
             err.write_all(b"\r\x1B[K").map_err(Error::Write)?;
             err.flush().map_err(Error::Write)?;
@@ -116,7 +116,7 @@ impl StatusLine {
     }
 
     fn print(&self) -> Result<(), Error> {
-        if let StatusLine::Active { ref start, ref err } = self {
+        if let StatusLine::Active { start, err } = self {
             let elapsed = start.elapsed();
             let mut secs = elapsed.as_secs();
             let hours = secs / 3600;
