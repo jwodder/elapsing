@@ -1,3 +1,4 @@
+use lexopt::{Arg, Parser};
 use std::ffi::OsString;
 use std::future::Future;
 use std::io::{self, IsTerminal, Write};
@@ -14,40 +15,98 @@ use tokio::{
 
 const READ_BUFFER_SIZE: usize = 2048;
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum Arguments {
+    Run { cmd: OsString, args: Vec<OsString> },
+    Help,
+    Version,
+}
+
+impl Arguments {
+    fn from_parser(mut parser: Parser) -> Result<Arguments, lexopt::Error> {
+        #[expect(clippy::never_loop)] // It'll loop one day.
+        while let Some(arg) = parser.next()? {
+            match arg {
+                Arg::Short('h') | Arg::Long("help") => return Ok(Arguments::Help),
+                Arg::Short('V') | Arg::Long("version") => return Ok(Arguments::Version),
+                Arg::Value(cmd) => {
+                    let args = parser.raw_args()?.collect::<Vec<_>>();
+                    return Ok(Arguments::Run { cmd, args });
+                }
+                _ => return Err(arg.unexpected()),
+            }
+        }
+        Err("Usage: elapsing [<options>] <command> [<arg> ...]".into())
+    }
+
+    fn run(self) -> Result<ExitCode, Error> {
+        match self {
+            Arguments::Run { cmd, args } => run(cmd, args),
+            Arguments::Help => {
+                write!(
+                    io::stdout().lock(),
+                    concat!(
+                        "Usage: elapsing [<options>] <command> [<arg> ...]\n",
+                        "\n",
+                        "Show runtime while a command runs\n",
+                        "\n",
+                        "Visit <https://github.com/jwodder/elapsing> for more information.\n",
+                        "\n",
+                        "Options:\n",
+                        "  -h, --help        Display this help message and exit\n",
+                        "  -V, --version     Show the program version and exit\n",
+                    )
+                )
+                .map_err(Error::Write)?;
+                Ok(ExitCode::SUCCESS)
+            }
+            Arguments::Version => {
+                writeln!(
+                    io::stdout().lock(),
+                    "{} {}",
+                    env!("CARGO_PKG_NAME"),
+                    env!("CARGO_PKG_VERSION")
+                )
+                .map_err(Error::Write)?;
+                Ok(ExitCode::SUCCESS)
+            }
+        }
+    }
+}
+
 fn main() -> ExitCode {
-    let mut argv = std::env::args_os();
-    let argv0 = argv
-        .next()
-        .unwrap_or_else(|| OsString::from("elapsing"))
-        .display()
-        .to_string();
-    let Some(command) = argv.next() else {
-        let _ = writeln!(io::stderr().lock(), "Usage: {argv0} command [args ...]");
-        return ExitCode::FAILURE;
-    };
-    let mut cmd = Command::new(command);
-    cmd.args(argv)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true);
-    match run(cmd) {
+    match Arguments::from_parser(Parser::from_env())
+        .map_err(Error::Usage)
+        .and_then(Arguments::run)
+    {
         Ok(code) => code,
         Err(e) if e.is_epipe_write() => ExitCode::SUCCESS,
+        Err(Error::Usage(e)) => {
+            // No "elapsing:" prefix:
+            let _ = writeln!(io::stderr().lock(), "{e}");
+            ExitCode::FAILURE
+        }
         Err(e) => {
-            let _ = writeln!(io::stderr().lock(), "{argv0}: {e}");
+            let _ = writeln!(io::stderr().lock(), "elapsing: {e}");
             ExitCode::FAILURE
         }
     }
 }
 
 #[tokio::main(flavor = "current_thread")]
-async fn run(mut cmd: Command) -> Result<ExitCode, Error> {
+async fn run(cmd: OsString, args: Vec<OsString>) -> Result<ExitCode, Error> {
     let statline = StatusLine::new();
     let stdout = io::stdout();
     let stderr = io::stderr();
     let stdout_is_tty = stdout.is_terminal();
     let mut ticker = interval(Duration::from_secs(1));
-    let mut p = cmd.spawn().map_err(Error::Spawn)?;
+    let mut p = Command::new(cmd)
+        .args(args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .map_err(Error::Spawn)?;
     let mut pout = ByteLines::new(p.stdout.take().expect("Child.stdout should be Some"));
     let mut perr = ByteLines::new(p.stderr.take().expect("Child.stderr should be Some"));
     statline.print()?;
@@ -214,6 +273,8 @@ impl<R: AsyncRead + Unpin> Future for NextLine<'_, R> {
 
 #[derive(Debug, Error)]
 enum Error {
+    #[error(transparent)]
+    Usage(lexopt::Error),
     #[error("failed to spawn child process: {0}")]
     Spawn(io::Error),
     #[error(transparent)]
@@ -237,6 +298,112 @@ impl Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    mod parse_args {
+        use super::*;
+
+        #[test]
+        fn command_only() {
+            let parser = Parser::from_iter(["elapsing", "foo"]);
+            assert_eq!(
+                Arguments::from_parser(parser).unwrap(),
+                Arguments::Run {
+                    cmd: "foo".into(),
+                    args: Vec::new()
+                }
+            );
+        }
+
+        #[test]
+        fn command_with_arg() {
+            let parser = Parser::from_iter(["elapsing", "foo", "bar"]);
+            assert_eq!(
+                Arguments::from_parser(parser).unwrap(),
+                Arguments::Run {
+                    cmd: "foo".into(),
+                    args: vec!["bar".into()],
+                }
+            );
+        }
+
+        #[test]
+        fn command_with_opt() {
+            let parser = Parser::from_iter(["elapsing", "foo", "--bar"]);
+            assert_eq!(
+                Arguments::from_parser(parser).unwrap(),
+                Arguments::Run {
+                    cmd: "foo".into(),
+                    args: vec!["--bar".into()],
+                }
+            );
+        }
+
+        #[test]
+        fn command_with_my_opt() {
+            let parser = Parser::from_iter(["elapsing", "foo", "--help"]);
+            assert_eq!(
+                Arguments::from_parser(parser).unwrap(),
+                Arguments::Run {
+                    cmd: "foo".into(),
+                    args: vec!["--help".into()],
+                }
+            );
+        }
+
+        #[test]
+        fn help() {
+            let parser = Parser::from_iter(["elapsing", "--help"]);
+            assert_eq!(Arguments::from_parser(parser).unwrap(), Arguments::Help);
+        }
+
+        #[test]
+        fn version() {
+            let parser = Parser::from_iter(["elapsing", "--version"]);
+            assert_eq!(Arguments::from_parser(parser).unwrap(), Arguments::Version);
+        }
+
+        #[test]
+        fn help_and_command() {
+            let parser = Parser::from_iter(["elapsing", "--help", "foo"]);
+            assert_eq!(Arguments::from_parser(parser).unwrap(), Arguments::Help);
+        }
+
+        #[test]
+        fn double_dash_command() {
+            let parser = Parser::from_iter(["elapsing", "--", "foo"]);
+            assert_eq!(
+                Arguments::from_parser(parser).unwrap(),
+                Arguments::Run {
+                    cmd: "foo".into(),
+                    args: Vec::new()
+                }
+            );
+        }
+
+        #[test]
+        fn double_dash_opt() {
+            let parser = Parser::from_iter(["elapsing", "--", "--help"]);
+            assert_eq!(
+                Arguments::from_parser(parser).unwrap(),
+                Arguments::Run {
+                    cmd: "--help".into(),
+                    args: Vec::new()
+                }
+            );
+        }
+
+        #[test]
+        fn command_double_dash() {
+            let parser = Parser::from_iter(["elapsing", "foo", "--", "bar"]);
+            assert_eq!(
+                Arguments::from_parser(parser).unwrap(),
+                Arguments::Run {
+                    cmd: "foo".into(),
+                    args: vec!["--".into(), "bar".into()],
+                }
+            );
+        }
+    }
 
     mod byte_lines {
         use super::*;

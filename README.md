@@ -22,6 +22,29 @@ latest version of `elapsing` and install it in `~/.cargo/bin` by running:
     cargo install --git https://github.com/jwodder/elapsing
 
 
+Usage
+=====
+
+    elapsing [<options>] <command> [<arg> ...]
+
+`elapsing` takes the name of a command to run plus any arguments to that
+command.  While the command is running, the elapsed time is displayed in a
+status line written to standard error below the command's output and updated
+once per second.  If `elapsing`'s standard error is redirected, the status line
+will not be shown.
+
+When the command exits, the status line is erased, and `elapsing` exits with
+the same return code as the command; if the command was killed by a signal, a
+message is printed to stderr, and `elapsing` exits with return code 1 instead.
+
+Options
+-------
+
+- `-h`, `--help` — Show command-line usage
+
+- `-V`, `--version` — Show current program version
+
+
 Restrictions
 ============
 
