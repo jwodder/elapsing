@@ -114,16 +114,22 @@ async fn sleepy() {
         .await
         .unwrap();
     screen
-        .wait_for_contents("Starting...\nWorking...\nElapsed: 00:00:03", LAX_SECOND)
-        .await
-        .unwrap();
-    screen
-        .wait_for_contents("Starting...\nWorking...\nElapsed: 00:00:04", LAX_SECOND)
+        .wait_for_contents(
+            "Starting...\nWorking...\nStdout is not a tty\nElapsed: 00:00:03",
+            LAX_SECOND,
+        )
         .await
         .unwrap();
     screen
         .wait_for_contents(
-            "Starting...\nWorking...\nShutting down...\nElapsed: 00:00:05",
+            "Starting...\nWorking...\nStdout is not a tty\nElapsed: 00:00:04",
+            LAX_SECOND,
+        )
+        .await
+        .unwrap();
+    screen
+        .wait_for_contents(
+            "Starting...\nWorking...\nStdout is not a tty\nShutting down...\nElapsed: 00:00:05",
             LAX_SECOND,
         )
         .await
@@ -132,6 +138,6 @@ async fn sleepy() {
     assert!(r.success());
     assert_eq!(
         screen.contents(),
-        "Starting...\nWorking...\nShutting down..."
+        "Starting...\nWorking...\nStdout is not a tty\nShutting down..."
     );
 }
