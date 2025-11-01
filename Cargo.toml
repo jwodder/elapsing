@@ -2,7 +2,7 @@
 name = "elapsed-cmd"
 version = "0.1.0-dev"
 edition = "2024"
-rust-version = "1.87"
+rust-version = "1.85"
 description = "Show runtime while a command runs"
 authors = ["John Thorvald Wodder II <elapsed@varonathe.org>"]
 repository = "https://github.com/jwodder/elapsed"
