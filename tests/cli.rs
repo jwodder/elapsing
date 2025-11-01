@@ -33,6 +33,27 @@ impl TestScreen {
         self.parser.screen().contents()
     }
 
+    async fn read(&mut self) -> std::io::Result<Option<Vec<u8>>> {
+        let mut buf = vec![0u8; 2048];
+        match self.pty.read(&mut buf).await {
+            Ok(0) => Ok(None),
+            #[cfg(target_os = "linux")]
+            Err(e) if e.raw_os_error() == Some(5) => {
+                // On Linux, attempting to read from a pty master after the
+                // slave closes (due, e.g., to the child process exiting)
+                // results in EIO (which Rust currently represents with the
+                // undocumented ErrorKind::Uncategorized).
+                Ok(None)
+            }
+            Ok(n) => {
+                buf.truncate(n);
+                Ok(Some(buf))
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    #[allow(clippy::match_wild_err_arm)]
     async fn wait_for_contents(
         &mut self,
         expected: &str,
@@ -40,32 +61,34 @@ impl TestScreen {
     ) -> std::io::Result<()> {
         let deadline = Instant::now() + timeout;
         loop {
-            let mut buf = vec![0u8; 2048];
-            if let Ok(r) = timeout_at(deadline, self.pty.read(&mut buf)).await {
-                #[allow(clippy::manual_assert)]
-                if r? == 0 {
+            match timeout_at(deadline, self.read()).await {
+                Ok(Ok(Some(buf))) => {
+                    self.parser.process(&buf);
+                    if self.contents() == expected {
+                        return Ok(());
+                    }
+                }
+                Ok(Ok(None)) => {
                     panic!(
                         "Reached EOF while waiting for screen contents {expected:?}; final content = {:?}",
                         self.contents()
                     );
                 }
-                self.parser.process(&buf);
-                if self.contents() == expected {
-                    return Ok(());
+                Ok(Err(e)) => return Err(e),
+                Err(_) => {
+                    panic!(
+                        "Timed out while waiting for screen contents {expected:?}; final content = {:?}",
+                        self.contents()
+                    );
                 }
-            } else {
-                panic!(
-                    "Timed out while waiting for screen contents {expected:?}; final content = {:?}",
-                    self.contents()
-                );
             }
         }
     }
 
     async fn wait_for_exit(&mut self) -> std::io::Result<ExitStatus> {
-        let mut buf = Vec::new();
-        self.pty.read_to_end(&mut buf).await?;
-        self.parser.process(&buf);
+        while let Some(buf) = self.read().await? {
+            self.parser.process(&buf);
+        }
         self.p.wait().await
     }
 }
