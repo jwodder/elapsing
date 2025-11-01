@@ -1,4 +1,5 @@
 #![cfg(unix)]
+use std::io::{Seek, Write};
 use std::process::ExitStatus;
 use std::time::Duration;
 use tokio::{
@@ -139,5 +140,45 @@ async fn sleepy() {
     assert_eq!(
         screen.contents(),
         "Starting...\nWorking...\nStdout is not a tty\nShutting down..."
+    );
+}
+
+#[tokio::test]
+async fn read_stdin() {
+    let mut infile = tempfile::tempfile().unwrap();
+    infile.write_all(b"Apple\nBanana\nCoconut\n").unwrap();
+    infile.flush().unwrap();
+    infile.rewind().unwrap();
+    let mut screen = TestScreen::spawn(
+        pty_process::Command::new(env!("CARGO_BIN_EXE_elapsing"))
+            .arg("python3")
+            .arg(format!("{SCRIPTS_DIR}/read-stdin.py"))
+            .stdin(infile),
+    )
+    .unwrap();
+    screen
+        .wait_for_contents("Line 1: Apple\nElapsed: 00:00:01", LAX_SECOND)
+        .await
+        .unwrap();
+
+    screen
+        .wait_for_contents(
+            "Line 1: Apple\nLine 2: Banana\nElapsed: 00:00:02",
+            LAX_SECOND,
+        )
+        .await
+        .unwrap();
+    screen
+        .wait_for_contents(
+            "Line 1: Apple\nLine 2: Banana\nLine 3: Coconut\nElapsed: 00:00:03",
+            LAX_SECOND,
+        )
+        .await
+        .unwrap();
+    let r = screen.wait_for_exit().await.unwrap();
+    assert!(r.success());
+    assert_eq!(
+        screen.contents(),
+        "Line 1: Apple\nLine 2: Banana\nLine 3: Coconut",
     );
 }
