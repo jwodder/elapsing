@@ -83,6 +83,12 @@ async fn run(mut cmd: Command) -> Result<ExitCode, Error> {
                     return Err(Error::Signal(rc));
                 }
             }
+            r = tokio::signal::ctrl_c() => {
+                if r.is_ok() {
+                    statline.clear()?;
+                    return Ok(ExitCode::FAILURE);
+                } // Else: Keep your mouth shut?
+            }
         }
     }
 }

@@ -14,7 +14,7 @@ exclude = ["/.*"]
 
 [dependencies]
 thiserror = "2.0.17"
-tokio = { version = "1.48.0", features = ["io-util", "macros", "process", "rt", "time"] }
+tokio = { version = "1.48.0", features = ["io-util", "macros", "process", "rt", "signal", "time"] }
 
 [dev-dependencies]
 
