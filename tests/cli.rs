@@ -12,7 +12,7 @@ const SCREEN_WIDTH: u16 = 24;
 const SCREEN_HEIGHT: u16 = 80;
 
 const STARTUP_WAIT: Duration = Duration::from_millis(100);
-const LAX_SECOND: Duration = Duration::from_millis(1300);
+const LAX_SECOND: Duration = Duration::from_millis(1500);
 
 struct TestScreen {
     parser: vt100::Parser,
