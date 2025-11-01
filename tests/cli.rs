@@ -97,7 +97,7 @@ impl TestScreen {
 #[tokio::test]
 async fn sleepy() {
     let mut screen = TestScreen::spawn(
-        pty_process::Command::new(env!("CARGO_BIN_EXE_elapsing"))
+        pty_process::Command::new(env!("CARGO_BIN_EXE_elapsed"))
             .arg("python3")
             .arg(format!("{SCRIPTS_DIR}/sleepy.py")),
     )
@@ -150,7 +150,7 @@ async fn read_stdin() {
     infile.flush().unwrap();
     infile.rewind().unwrap();
     let mut screen = TestScreen::spawn(
-        pty_process::Command::new(env!("CARGO_BIN_EXE_elapsing"))
+        pty_process::Command::new(env!("CARGO_BIN_EXE_elapsed"))
             .arg("python3")
             .arg(format!("{SCRIPTS_DIR}/read-stdin.py"))
             .stdin(infile),

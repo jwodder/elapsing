@@ -1,12 +1,12 @@
 [package]
-name = "elapsing"
+name = "elapsed-cmd"
 version = "0.1.0-dev"
 edition = "2024"
 rust-version = "1.87"
 description = "Show runtime while a command runs"
-authors = ["John Thorvald Wodder II <elapsing@varonathe.org>"]
-repository = "https://github.com/jwodder/elapsing"
-documentation = "https://github.com/jwodder/elapsing"
+authors = ["John Thorvald Wodder II <elapsed@varonathe.org>"]
+repository = "https://github.com/jwodder/elapsed"
+documentation = "https://github.com/jwodder/elapsed"
 license = "MIT"
 keywords = ["runtime", "time"]
 categories = ["command-line-utilities"]
@@ -24,6 +24,10 @@ vt100 = "0.16.2"
 
 [target."cfg(unix)".dev-dependencies]
 pty-process = { version = "0.5.3", features = ["async"] }
+
+[[bin]]
+name = "elapsed"
+path = "src/main.rs"
 
 [lints.rust]
 # Lint groups:

@@ -36,7 +36,7 @@ impl Arguments {
                 _ => return Err(arg.unexpected()),
             }
         }
-        Err("Usage: elapsing [<options>] <command> [<arg> ...]".into())
+        Err("Usage: elapsed [<options>] <command> [<arg> ...]".into())
     }
 
     fn run(self) -> Result<ExitCode, Error> {
@@ -46,11 +46,11 @@ impl Arguments {
                 write!(
                     io::stdout().lock(),
                     concat!(
-                        "Usage: elapsing [<options>] <command> [<arg> ...]\n",
+                        "Usage: elapsed [<options>] <command> [<arg> ...]\n",
                         "\n",
                         "Show runtime while a command runs\n",
                         "\n",
-                        "Visit <https://github.com/jwodder/elapsing> for more information.\n",
+                        "Visit <https://github.com/jwodder/elapsed> for more information.\n",
                         "\n",
                         "Options:\n",
                         "  -h, --help        Display this help message and exit\n",
@@ -82,12 +82,12 @@ fn main() -> ExitCode {
         Ok(code) => code,
         Err(e) if e.is_epipe_write() => ExitCode::SUCCESS,
         Err(Error::Usage(e)) => {
-            // No "elapsing:" prefix:
+            // No "elapsed:" prefix:
             let _ = writeln!(io::stderr().lock(), "{e}");
             ExitCode::FAILURE
         }
         Err(e) => {
-            let _ = writeln!(io::stderr().lock(), "elapsing: {e}");
+            let _ = writeln!(io::stderr().lock(), "elapsed: {e}");
             ExitCode::FAILURE
         }
     }
@@ -304,7 +304,7 @@ mod tests {
 
         #[test]
         fn command_only() {
-            let parser = Parser::from_iter(["elapsing", "foo"]);
+            let parser = Parser::from_iter(["elapsed", "foo"]);
             assert_eq!(
                 Arguments::from_parser(parser).unwrap(),
                 Arguments::Run {
@@ -316,7 +316,7 @@ mod tests {
 
         #[test]
         fn command_with_arg() {
-            let parser = Parser::from_iter(["elapsing", "foo", "bar"]);
+            let parser = Parser::from_iter(["elapsed", "foo", "bar"]);
             assert_eq!(
                 Arguments::from_parser(parser).unwrap(),
                 Arguments::Run {
@@ -328,7 +328,7 @@ mod tests {
 
         #[test]
         fn command_with_opt() {
-            let parser = Parser::from_iter(["elapsing", "foo", "--bar"]);
+            let parser = Parser::from_iter(["elapsed", "foo", "--bar"]);
             assert_eq!(
                 Arguments::from_parser(parser).unwrap(),
                 Arguments::Run {
@@ -340,7 +340,7 @@ mod tests {
 
         #[test]
         fn command_with_my_opt() {
-            let parser = Parser::from_iter(["elapsing", "foo", "--help"]);
+            let parser = Parser::from_iter(["elapsed", "foo", "--help"]);
             assert_eq!(
                 Arguments::from_parser(parser).unwrap(),
                 Arguments::Run {
@@ -352,25 +352,25 @@ mod tests {
 
         #[test]
         fn help() {
-            let parser = Parser::from_iter(["elapsing", "--help"]);
+            let parser = Parser::from_iter(["elapsed", "--help"]);
             assert_eq!(Arguments::from_parser(parser).unwrap(), Arguments::Help);
         }
 
         #[test]
         fn version() {
-            let parser = Parser::from_iter(["elapsing", "--version"]);
+            let parser = Parser::from_iter(["elapsed", "--version"]);
             assert_eq!(Arguments::from_parser(parser).unwrap(), Arguments::Version);
         }
 
         #[test]
         fn help_and_command() {
-            let parser = Parser::from_iter(["elapsing", "--help", "foo"]);
+            let parser = Parser::from_iter(["elapsed", "--help", "foo"]);
             assert_eq!(Arguments::from_parser(parser).unwrap(), Arguments::Help);
         }
 
         #[test]
         fn double_dash_command() {
-            let parser = Parser::from_iter(["elapsing", "--", "foo"]);
+            let parser = Parser::from_iter(["elapsed", "--", "foo"]);
             assert_eq!(
                 Arguments::from_parser(parser).unwrap(),
                 Arguments::Run {
@@ -382,7 +382,7 @@ mod tests {
 
         #[test]
         fn double_dash_opt() {
-            let parser = Parser::from_iter(["elapsing", "--", "--help"]);
+            let parser = Parser::from_iter(["elapsed", "--", "--help"]);
             assert_eq!(
                 Arguments::from_parser(parser).unwrap(),
                 Arguments::Run {
@@ -394,7 +394,7 @@ mod tests {
 
         #[test]
         fn command_double_dash() {
-            let parser = Parser::from_iter(["elapsing", "foo", "--", "bar"]);
+            let parser = Parser::from_iter(["elapsed", "foo", "--", "bar"]);
             assert_eq!(
                 Arguments::from_parser(parser).unwrap(),
                 Arguments::Run {
