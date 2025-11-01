@@ -241,8 +241,7 @@ mod tests {
     mod byte_lines {
         use super::*;
         use std::io::Cursor;
-        use tokio::time::timeout;
-        use tokio_test::io::Builder;
+        use tokio_test::{assert_pending, io::Builder, task::spawn};
 
         #[tokio::test]
         async fn many_short_lines() {
@@ -251,8 +250,8 @@ mod tests {
             assert_eq!(lines.next_line().await.unwrap(), b"Hello!\n");
             assert_eq!(lines.next_line().await.unwrap(), b"I like your code.\n");
             assert_eq!(lines.next_line().await.unwrap(), b"Goodbye!\n");
-            let r = timeout(Duration::from_millis(100), lines.next_line()).await;
-            assert!(r.is_err());
+            let mut fut = spawn(lines.next_line());
+            assert_pending!(fut.poll());
         }
 
         #[tokio::test]
@@ -262,8 +261,8 @@ mod tests {
             assert_eq!(lines.next_line().await.unwrap(), b"Hello!\n");
             assert_eq!(lines.next_line().await.unwrap(), b"I like your code.\n");
             assert_eq!(lines.next_line().await.unwrap(), b"Goodbye!");
-            let r = timeout(Duration::from_millis(100), lines.next_line()).await;
-            assert!(r.is_err());
+            let mut fut = spawn(lines.next_line());
+            assert_pending!(fut.poll());
         }
 
         #[tokio::test]
@@ -276,8 +275,8 @@ mod tests {
             let mut lines = ByteLines::new(reader);
             assert_eq!(lines.next_line().await.unwrap(), b"Hello, World!\n");
             assert_eq!(lines.next_line().await.unwrap(), b"Bye now!\n");
-            let r = timeout(Duration::from_millis(100), lines.next_line()).await;
-            assert!(r.is_err());
+            let mut fut = spawn(lines.next_line());
+            assert_pending!(fut.poll());
         }
     }
 }
