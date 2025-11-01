@@ -278,5 +278,16 @@ mod tests {
             let mut fut = spawn(lines.next_line());
             assert_pending!(fut.poll());
         }
+
+        #[tokio::test]
+        async fn non_utf8() {
+            let reader = Cursor::new(b"Hell\xF6!\nI like your code.\nGoodbye!\n");
+            let mut lines = ByteLines::new(reader);
+            assert_eq!(lines.next_line().await.unwrap(), b"Hell\xF6!\n");
+            assert_eq!(lines.next_line().await.unwrap(), b"I like your code.\n");
+            assert_eq!(lines.next_line().await.unwrap(), b"Goodbye!\n");
+            let mut fut = spawn(lines.next_line());
+            assert_pending!(fut.poll());
+        }
     }
 }
