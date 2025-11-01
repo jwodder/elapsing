@@ -165,7 +165,9 @@ impl<R> ByteLines<R> {
             self.next_index = 0;
             Some(self.buffer.drain(0..=newline_pos).collect())
         } else if self.eof {
-            (!self.buffer.is_empty()).then(|| std::mem::take(&mut self.buffer))
+            let r = (!self.buffer.is_empty()).then(|| std::mem::take(&mut self.buffer));
+            self.next_index = 0;
+            r
         } else {
             self.next_index = self.buffer.len();
             None
@@ -229,5 +231,63 @@ enum Error {
 impl Error {
     fn is_epipe_write(&self) -> bool {
         matches!(self, Error::Write(e) if e.kind() == io::ErrorKind::BrokenPipe)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    mod byte_lines {
+        use super::*;
+        use std::io::Cursor;
+        use tokio_test::{assert_pending, io::Builder, task::spawn};
+
+        #[tokio::test]
+        async fn many_short_lines() {
+            let reader = Cursor::new(b"Hello!\nI like your code.\nGoodbye!\n");
+            let mut lines = ByteLines::new(reader);
+            assert_eq!(lines.next_line().await.unwrap(), b"Hello!\n");
+            assert_eq!(lines.next_line().await.unwrap(), b"I like your code.\n");
+            assert_eq!(lines.next_line().await.unwrap(), b"Goodbye!\n");
+            let mut fut = spawn(lines.next_line());
+            assert_pending!(fut.poll());
+        }
+
+        #[tokio::test]
+        async fn many_short_lines_no_final_newline() {
+            let reader = Cursor::new(b"Hello!\nI like your code.\nGoodbye!");
+            let mut lines = ByteLines::new(reader);
+            assert_eq!(lines.next_line().await.unwrap(), b"Hello!\n");
+            assert_eq!(lines.next_line().await.unwrap(), b"I like your code.\n");
+            assert_eq!(lines.next_line().await.unwrap(), b"Goodbye!");
+            let mut fut = spawn(lines.next_line());
+            assert_pending!(fut.poll());
+        }
+
+        #[tokio::test]
+        async fn split_line() {
+            let reader = Builder::new()
+                .read(b"Hello, ")
+                .read(b"World!\n")
+                .read(b"Bye now!\n")
+                .build();
+            let mut lines = ByteLines::new(reader);
+            assert_eq!(lines.next_line().await.unwrap(), b"Hello, World!\n");
+            assert_eq!(lines.next_line().await.unwrap(), b"Bye now!\n");
+            let mut fut = spawn(lines.next_line());
+            assert_pending!(fut.poll());
+        }
+
+        #[tokio::test]
+        async fn non_utf8() {
+            let reader = Cursor::new(b"Hell\xF6!\nI like your code.\nGoodbye!\n");
+            let mut lines = ByteLines::new(reader);
+            assert_eq!(lines.next_line().await.unwrap(), b"Hell\xF6!\n");
+            assert_eq!(lines.next_line().await.unwrap(), b"I like your code.\n");
+            assert_eq!(lines.next_line().await.unwrap(), b"Goodbye!\n");
+            let mut fut = spawn(lines.next_line());
+            assert_pending!(fut.poll());
+        }
     }
 }
