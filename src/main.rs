@@ -32,18 +32,24 @@ impl Arguments {
         let mut split_stderr = false;
         while let Some(arg) = parser.next()? {
             match arg {
-                #[cfg(unix)]
-                Arg::Short('S') | Arg::Long("split-stderr") => split_stderr = true,
-                #[cfg(not(unix))]
                 Arg::Short('S') | Arg::Long("split-stderr") => {
-                    return Err("--split-stderr is not supported on this system".into());
+                    cfg_if! {
+                        if #[cfg(unix)] {
+                            split_stderr = true;
+                        } else {
+                            return Err("--split-stderr is not supported on this system".into());
+                        }
+                    }
                 }
                 Arg::Short('t') | Arg::Long("total") => total = true,
-                #[cfg(unix)]
-                Arg::Short('T') | Arg::Long("tty") => tty = true,
-                #[cfg(not(unix))]
                 Arg::Short('T') | Arg::Long("tty") => {
-                    return Err("--tty is not supported on this system".into());
+                    cfg_if! {
+                        if #[cfg(unix)] {
+                            tty = true;
+                        } else {
+                            return Err("--tty is not supported on this system".into());
+                        }
+                    }
                 }
                 Arg::Short('h') | Arg::Long("help") => return Ok(Arguments::Help),
                 Arg::Short('V') | Arg::Long("version") => return Ok(Arguments::Version),
