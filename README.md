@@ -44,6 +44,23 @@ Options
 
 - `-t`, `--total` — Leave the total elapsed time behind after the command finishes
 
+- `-T`, `--tty` — Run the command via a pseudo-terminal.  This is useful if the
+  command's behavior (e.g., whether it buffers output or emits ANSI color
+  sequences) changes depending on whether it's directly connected to a
+  terminal.
+
+  This option is only available on Unix.
+
+- `-S`, `--split-stderr` — When the `--tty` option is given, by default, the
+  command's stdout and stderr will be merged together into a single stream that
+  is ultimately printed on `elapsed`'s stdout.  If `--split-stderr` is given,
+  the command's stderr will not be connected to the pseudo-terminal and will
+  instead be sent to `elapsed`'s stderr so that stdout & stderr can then be
+  redirected separately.
+
+  This option is only available on Unix and only has an effect when `--tty` is
+  also given.
+
 - `-h`, `--help` — Show command-line usage
 
 - `-V`, `--version` — Show current program version
