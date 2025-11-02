@@ -152,6 +152,7 @@ impl Elapsed {
         Ok((p, pout, perr))
     }
 
+    #[cfg(unix)]
     fn spawn_tty(&self) -> Result<(Child, ByteLines<ChildOutput>, ByteLines<ChildOutput>), Error> {
         let (pty, pts) = pty_process::open().map_err(Error::InitPty)?;
         if let Some((width, height)) = terminal_size::terminal_size() {
