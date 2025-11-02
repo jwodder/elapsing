@@ -36,7 +36,7 @@ impl Arguments {
                 _ => return Err(arg.unexpected()),
             }
         }
-        Err("Usage: elapsed [<options>] <command> [<arg> ...]".into())
+        Err("no command supplied".into())
     }
 
     fn run(self) -> Result<ExitCode, Error> {
@@ -81,11 +81,6 @@ fn main() -> ExitCode {
     {
         Ok(code) => code,
         Err(e) if e.is_epipe_write() => ExitCode::SUCCESS,
-        Err(Error::Usage(e)) => {
-            // No "elapsed:" prefix:
-            let _ = writeln!(io::stderr().lock(), "{e}");
-            ExitCode::FAILURE
-        }
         Err(e) => {
             let _ = writeln!(io::stderr().lock(), "elapsed: {e}");
             ExitCode::FAILURE
