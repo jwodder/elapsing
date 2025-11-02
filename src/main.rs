@@ -28,8 +28,16 @@ impl Arguments {
         let mut total = false;
         #[cfg(unix)]
         let mut tty = false;
+        #[cfg(unix)]
+        let mut split_stderr = false;
         while let Some(arg) = parser.next()? {
             match arg {
+                #[cfg(unix)]
+                Arg::Short('S') | Arg::Long("split-stderr") => split_stderr = true,
+                #[cfg(not(unix))]
+                Arg::Short('S') | Arg::Long("split-stderr") => {
+                    return Err("--split-stderr is not supported on this system".into());
+                }
                 Arg::Short('t') | Arg::Long("total") => total = true,
                 #[cfg(unix)]
                 Arg::Short('T') | Arg::Long("tty") => tty = true,
@@ -43,7 +51,7 @@ impl Arguments {
                     let args = parser.raw_args()?.collect::<Vec<_>>();
                     cfg_if! {
                         if #[cfg(unix)] {
-                            return Ok(Arguments::Run(Elapsed { cmd, args, total, tty }));
+                            return Ok(Arguments::Run(Elapsed { cmd, args, total, tty, split_stderr }));
                         } else {
                             return Ok(Arguments::Run(Elapsed { cmd, args, total }));
                         }
@@ -70,7 +78,14 @@ impl Arguments {
                         "\n",
                         "Options:\n",
                         "  -t, --total       Leave total elapsed time behind after command finishes\n",
+                        "\n",
                         "  -T, --tty         Run command in a pseudo-terminal [Unix only]\n",
+                        "\n",
+                        "  -S, --split-stderr\n",
+                        "                    When used with --tty, send the command's stderr directly to\n",
+                        "                    elapsed's stderr instead of unifying with stdout via the\n",
+                        "                    pseudo-terminal [Unix only]\n",
+                        "\n",
                         "  -h, --help        Display this help message and exit\n",
                         "  -V, --version     Show the program version and exit\n",
                     )
@@ -99,6 +114,8 @@ struct Elapsed {
     total: bool,
     #[cfg(unix)]
     tty: bool,
+    #[cfg(unix)]
+    split_stderr: bool,
 }
 
 impl Elapsed {
@@ -141,16 +158,23 @@ impl Elapsed {
             pty.resize(pty_process::Size::new(width.0, height.0))
                 .map_err(Error::InitPty)?;
         }
-        let p = pty_process::Command::new(&self.cmd)
+        let mut cmd = pty_process::Command::new(&self.cmd)
             .args(&self.args)
             .stdin(Stdio::inherit())
-            .kill_on_drop(true)
-            .spawn(pts)
-            .map_err(Error::SpawnPty)?;
+            .kill_on_drop(true);
+        if self.split_stderr {
+            cmd = cmd.stderr(Stdio::piped());
+        }
+        let mut p = cmd.spawn(pts).map_err(Error::SpawnPty)?;
+        let perr = if self.split_stderr {
+            ChildOutput::Stderr(p.stderr.take().expect("Child.stderr should be Some"))
+        } else {
+            ChildOutput::Null
+        };
         Ok((
             p,
             ByteLines::new(ChildOutput::Pty(pty)),
-            ByteLines::new(ChildOutput::Null),
+            ByteLines::new(perr),
         ))
     }
 }
