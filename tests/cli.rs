@@ -292,3 +292,33 @@ async fn redir_stderr() {
     let err = String::from_utf8(err).unwrap();
     assert_eq!(err, "And this goes to stderr.\n");
 }
+
+#[tokio::test]
+async fn closer() {
+    let mut screen = TestScreen::spawn(
+        pty_process::Command::new(env!("CARGO_BIN_EXE_elapsed"))
+            .arg("python3")
+            .arg(format!("{SCRIPTS_DIR}/closer.py")),
+    )
+    .unwrap();
+    screen
+        .wait_for_contents(
+            "This is the last time I write to stdout!\nElapsed: 00:00:00",
+            STARTUP_WAIT,
+        )
+        .await
+        .unwrap();
+    screen
+        .wait_for_contents(
+            "This is the last time I write to stdout!\nAnd THIS is the last time I write to stderr!\nElapsed: 00:00:01",
+            LAX_SECOND,
+        )
+        .await
+        .unwrap();
+    let r = screen.wait_for_exit(LAX_SECOND).await.unwrap();
+    assert!(r.success());
+    assert_eq!(
+        screen.contents(),
+        "This is the last time I write to stdout!\nAnd THIS is the last time I write to stderr!",
+    );
+}
