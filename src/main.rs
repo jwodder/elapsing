@@ -1,5 +1,8 @@
+mod format;
+use crate::format::Format;
 use cfg_if::cfg_if;
-use lexopt::{Arg, Parser};
+use lexopt::{Arg, Parser, ValueExt};
+use std::borrow::Cow;
 use std::ffi::OsString;
 use std::future::Future;
 use std::io::{self, IsTerminal, Write};
@@ -25,6 +28,7 @@ enum Arguments {
 
 impl Arguments {
     fn from_parser(mut parser: Parser) -> Result<Arguments, lexopt::Error> {
+        let mut format: Option<Format> = None;
         let mut total = false;
         #[cfg(unix)]
         let mut tty = false;
@@ -32,6 +36,7 @@ impl Arguments {
         let mut split_stderr = false;
         while let Some(arg) = parser.next()? {
             match arg {
+                Arg::Short('f') | Arg::Long("format") => format = Some(parser.value()?.parse()?),
                 Arg::Short('S') | Arg::Long("split-stderr") => {
                     cfg_if! {
                         if #[cfg(unix)] {
@@ -55,11 +60,12 @@ impl Arguments {
                 Arg::Short('V') | Arg::Long("version") => return Ok(Arguments::Version),
                 Arg::Value(cmd) => {
                     let args = parser.raw_args()?.collect::<Vec<_>>();
+                    let format = format.unwrap_or_default();
                     cfg_if! {
                         if #[cfg(unix)] {
-                            return Ok(Arguments::Run(Elapsed { cmd, args, total, tty, split_stderr }));
+                            return Ok(Arguments::Run(Elapsed { cmd, args, format, total, tty, split_stderr }));
                         } else {
-                            return Ok(Arguments::Run(Elapsed { cmd, args, total }));
+                            return Ok(Arguments::Run(Elapsed { cmd, args, format, total }));
                         }
                     }
                 }
@@ -83,6 +89,21 @@ impl Arguments {
                         "Visit <https://github.com/jwodder/elapsed> for more information.\n",
                         "\n",
                         "Options:\n",
+                        "  -f <TEMPLATE>, --format <TEMPLATE>\n",
+                        "                    Set the format of the status line\n",
+                        "\n",
+                        "                    Supported escapes:\n",
+                        "                    - %H - hours\n",
+                        "                    - %M - minutes\n",
+                        "                    - %S - seconds in minute\n",
+                        "                    - %s - total seconds\n",
+                        "                    - %f - subseconds; can take a decimal precision\n",
+                        "                    - %n or \\n - newline\n",
+                        "                    - %t or \\t - tab\n",
+                        "                    - %e or \\e - escape character\n",
+                        "                    - %% - percent sign\n",
+                        "                    - \\\\ - backslash\n",
+                        "\n",
                         "  -t, --total       Leave total elapsed time behind after command finishes\n",
                         "\n",
                         "  -T, --tty         Run command via a pseudo-terminal [Unix only]\n",
@@ -117,6 +138,7 @@ impl Arguments {
 struct Elapsed {
     cmd: OsString,
     args: Vec<OsString>,
+    format: Format,
     total: bool,
     #[cfg(unix)]
     tty: bool,
@@ -200,7 +222,7 @@ fn main() -> ExitCode {
 
 #[tokio::main(flavor = "current_thread")]
 async fn run(app: Elapsed) -> Result<ExitCode, Error> {
-    let statline = StatusLine::new();
+    let statline = StatusLine::new(app.format.clone());
     let stdout = io::stdout();
     let stderr = io::stderr();
     let stdout_is_tty = stdout.is_terminal();
@@ -295,15 +317,20 @@ impl Elapsing {
 
 #[derive(Debug)]
 enum StatusLine {
-    Active { start: Instant, err: io::Stderr },
+    Active {
+        format: Format,
+        start: Instant,
+        err: io::Stderr,
+    },
     Inactive,
 }
 
 impl StatusLine {
-    fn new() -> StatusLine {
+    fn new(format: Format) -> StatusLine {
         let err = io::stderr();
         if err.is_terminal() {
             StatusLine::Active {
+                format,
                 start: Instant::now(),
                 err,
             }
@@ -313,9 +340,17 @@ impl StatusLine {
     }
 
     fn clear(&self) -> Result<(), Error> {
-        if let StatusLine::Active { err, .. } = self {
+        if let StatusLine::Active { format, err, .. } = self {
+            let s = if format.newlines() == 0 {
+                Cow::from("\r\x1B[K")
+            } else {
+                Cow::from(format!(
+                    "\x1B[{newlines}F\x1B[J",
+                    newlines = format.newlines()
+                ))
+            };
             let mut err = err.lock();
-            err.write_all(b"\r\x1B[K").map_err(Error::Write)?;
+            err.write_all(s.as_bytes()).map_err(Error::Write)?;
             err.flush().map_err(Error::Write)?;
         }
         Ok(())
@@ -330,14 +365,8 @@ impl StatusLine {
     }
 
     fn inner_print(&self, nl: bool) -> Result<(), Error> {
-        if let StatusLine::Active { start, err } = self {
-            let elapsed = start.elapsed();
-            let mut secs = elapsed.as_secs();
-            let hours = secs / 3600;
-            secs %= 3500;
-            let minutes = secs / 60;
-            secs %= 60;
-            let mut s = format!("Elapsed: {hours:02}:{minutes:02}:{secs:02}");
+        if let StatusLine::Active { format, start, err } = self {
+            let mut s = format.display(start.elapsed());
             if nl {
                 s.push('\n');
             }

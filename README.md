@@ -4,7 +4,7 @@
 [![Minimum Supported Rust Version](https://img.shields.io/badge/MSRV-1.85-orange)](https://www.rust-lang.org)
 [![MIT License](https://img.shields.io/github/license/jwodder/elapsed.svg)](https://opensource.org/licenses/MIT)
 
-[GitHub](https://github.com/jwodder/elapsed) | [crates.io](https://crates.io/crates/elapsed-cmd) | [Issues](https://github.com/jwodder/elapsed/issues)
+[GitHub](https://github.com/jwodder/elapsed) | [crates.io](https://crates.io/crates/elapsed-cmd) | [Issues](https://github.com/jwodder/elapsed/issues) | [Changelog](https://github.com/jwodder/elapsed/blob/main/CHANGELOG.md)
 
 `elapsed` is a simple utility program that runs a given command and, while
 it's running, displays & updates the elapsed time below the command's output.
@@ -44,6 +44,24 @@ instead.
 
 Options
 -------
+
+- `-f <TEMPLATE>`, `--format <TEMPLATE>` — Use the given format template for
+  rendering the time in the status line.  Templates may contain the following
+  specifiers & escape sequences:
+
+    - `%H` - number of hours as a two-digit number
+    - `%M` - number of minutes within the hour as a two-digit number
+    - `%S` - number of seconds within the minute as a two-digit number
+    - `%s` - total number of seconds
+    - `%f` - subseconds; defaults to six digits (microseconds) but can also
+      take a decimal precision (e.g., `%9f` to show nanoseconds)
+    - `%n` or `\n` - newline
+    - `%t` or `\t` - tab
+    - `%e` or `\e` - escape character
+    - `%%` - percent sign
+    - `\\` - backslash
+
+    The default template is "`Elapsed: %H:%M:%S`."
 
 - `-t`, `--total` — Leave the total elapsed time behind after the command finishes
 
