@@ -4,7 +4,7 @@ use std::process::ExitStatus;
 use std::time::Duration;
 use tokio::{
     io::AsyncReadExt,
-    time::{Instant, timeout_at},
+    time::{Instant, timeout, timeout_at},
 };
 
 static SCRIPTS_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/scripts");
@@ -86,7 +86,18 @@ impl TestScreen {
         }
     }
 
-    async fn wait_for_exit(&mut self) -> std::io::Result<ExitStatus> {
+    async fn wait_for_exit(&mut self, d: Duration) -> std::io::Result<ExitStatus> {
+        if let Ok(r) = timeout(d, self.inner_wait_for_exit()).await {
+            r
+        } else {
+            panic!(
+                "Timed out while waiting for exit; final content = {:?}",
+                self.contents()
+            );
+        }
+    }
+
+    async fn inner_wait_for_exit(&mut self) -> std::io::Result<ExitStatus> {
         while let Some(buf) = self.read().await? {
             self.parser.process(&buf);
         }
@@ -135,7 +146,7 @@ async fn sleepy() {
         )
         .await
         .unwrap();
-    let r = screen.wait_for_exit().await.unwrap();
+    let r = screen.wait_for_exit(LAX_SECOND).await.unwrap();
     assert!(r.success());
     assert_eq!(
         screen.contents(),
@@ -185,7 +196,7 @@ async fn sleepy_total() {
         )
         .await
         .unwrap();
-    let r = screen.wait_for_exit().await.unwrap();
+    let r = screen.wait_for_exit(LAX_SECOND).await.unwrap();
     assert!(r.success());
     assert_eq!(
         screen.contents(),
@@ -210,7 +221,6 @@ async fn read_stdin() {
         .wait_for_contents("Line 1: Apple\nElapsed: 00:00:01", LAX_SECOND)
         .await
         .unwrap();
-
     screen
         .wait_for_contents(
             "Line 1: Apple\nLine 2: Banana\nElapsed: 00:00:02",
@@ -225,10 +235,60 @@ async fn read_stdin() {
         )
         .await
         .unwrap();
-    let r = screen.wait_for_exit().await.unwrap();
+    let r = screen.wait_for_exit(LAX_SECOND).await.unwrap();
     assert!(r.success());
     assert_eq!(
         screen.contents(),
         "Line 1: Apple\nLine 2: Banana\nLine 3: Coconut",
     );
+}
+
+#[tokio::test]
+async fn write_stderr() {
+    let mut screen = TestScreen::spawn(
+        pty_process::Command::new(env!("CARGO_BIN_EXE_elapsed"))
+            .arg("python3")
+            .arg(format!("{SCRIPTS_DIR}/write-stderr.py")),
+    )
+    .unwrap();
+    screen
+        .wait_for_contents("This goes to stdout.\nElapsed: 00:00:00", STARTUP_WAIT)
+        .await
+        .unwrap();
+    screen
+        .wait_for_contents(
+            "This goes to stdout.\nAnd this goes to stderr.\nElapsed: 00:00:01",
+            LAX_SECOND,
+        )
+        .await
+        .unwrap();
+    let r = screen.wait_for_exit(LAX_SECOND).await.unwrap();
+    assert!(r.success());
+    assert_eq!(
+        screen.contents(),
+        "This goes to stdout.\nAnd this goes to stderr.\nBack to stdout.",
+    );
+}
+
+#[tokio::test]
+async fn redir_stderr() {
+    let scratch = tempfile::tempdir().unwrap();
+    let errfile = std::fs::File::create(scratch.path().join("stderr")).unwrap();
+    let mut screen = TestScreen::spawn(
+        pty_process::Command::new(env!("CARGO_BIN_EXE_elapsed"))
+            .arg("python3")
+            .arg(format!("{SCRIPTS_DIR}/write-stderr.py"))
+            .stderr(errfile),
+    )
+    .unwrap();
+    screen
+        .wait_for_contents("This goes to stdout.", Duration::from_millis(500))
+        .await
+        .unwrap();
+    let r = screen.wait_for_exit(LAX_SECOND * 2).await.unwrap();
+    assert!(r.success());
+    assert_eq!(screen.contents(), "This goes to stdout.\nBack to stdout.",);
+    let err = std::fs::read(scratch.path().join("stderr")).unwrap();
+    let err = String::from_utf8(err).unwrap();
+    assert_eq!(err, "And this goes to stderr.\n");
 }
