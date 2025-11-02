@@ -286,6 +286,7 @@ async fn redir_stderr() {
     let errfile = std::fs::File::create(scratch.path().join("stderr")).unwrap();
     let mut screen = TestScreen::spawn(
         pty_process::Command::new(env!("CARGO_BIN_EXE_elapsed"))
+            .arg("--total")
             .arg("python3")
             .arg(format!("{SCRIPTS_DIR}/write-stderr.py"))
             .stderr(errfile),
@@ -393,6 +394,52 @@ async fn kill_sleepy() {
     assert!(screen.contents().starts_with(
         "Starting...\nWorking...\nStdout is not a tty\nelapsed: child process killed by signal: "
     ));
+}
+
+#[tokio::test]
+async fn kill_sleepy_total() {
+    let mut screen = TestScreen::spawn(
+        pty_process::Command::new(env!("CARGO_BIN_EXE_elapsed"))
+            .arg("--total")
+            .arg("python3")
+            .arg(format!("{SCRIPTS_DIR}/sleepy.py")),
+    )
+    .unwrap();
+    screen
+        .wait_for_contents("Elapsed: 00:00:00", STARTUP_WAIT)
+        .await
+        .unwrap();
+    screen
+        .wait_for_contents("Starting...\nElapsed: 00:00:01", LAX_SECOND)
+        .await
+        .unwrap();
+    screen
+        .wait_for_contents("Starting...\nElapsed: 00:00:02", LAX_SECOND)
+        .await
+        .unwrap();
+    screen
+        .wait_for_contents(
+            "Starting...\nWorking...\nStdout is not a tty\nElapsed: 00:00:03",
+            LAX_SECOND,
+        )
+        .await
+        .unwrap();
+    let r = std::process::Command::new("pkill")
+        .arg("-P")
+        .arg(format!("{}", screen.p.id().unwrap()))
+        .status()
+        .unwrap();
+    assert!(r.success());
+    let r = screen
+        .wait_for_exit(Duration::from_millis(100))
+        .await
+        .unwrap();
+    assert!(!r.success());
+    assert_eq!(r.code(), Some(1));
+    let content = screen.contents();
+    assert!(content.starts_with(
+        "Starting...\nWorking...\nStdout is not a tty\nElapsed: 00:00:03\nelapsed: child process killed by signal: "
+    ), "{content:?}");
 }
 
 #[tokio::test]
