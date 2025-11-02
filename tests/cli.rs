@@ -282,7 +282,7 @@ async fn redir_stderr() {
     )
     .unwrap();
     screen
-        .wait_for_contents("This goes to stdout.", STARTUP_WAIT)
+        .wait_for_contents("This goes to stdout.", Duration::from_millis(500))
         .await
         .unwrap();
     let r = screen.wait_for_exit(LAX_SECOND * 2).await.unwrap();
