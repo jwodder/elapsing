@@ -9,29 +9,34 @@ use std::time::{Duration, Instant};
 use thiserror::Error;
 use tokio::{
     io::{AsyncRead, ReadBuf},
-    process::Command,
-    time::interval,
+    process::{Child, ChildStderr, ChildStdout, Command},
+    time::{Interval, interval},
 };
 
 const READ_BUFFER_SIZE: usize = 2048;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum Arguments {
-    Run { cmd: OsString, args: Vec<OsString> },
+    Run {
+        cmd: OsString,
+        args: Vec<OsString>,
+        total: bool,
+    },
     Help,
     Version,
 }
 
 impl Arguments {
     fn from_parser(mut parser: Parser) -> Result<Arguments, lexopt::Error> {
-        #[expect(clippy::never_loop)] // It'll loop one day.
+        let mut total = false;
         while let Some(arg) = parser.next()? {
             match arg {
+                Arg::Short('t') | Arg::Long("total") => total = true,
                 Arg::Short('h') | Arg::Long("help") => return Ok(Arguments::Help),
                 Arg::Short('V') | Arg::Long("version") => return Ok(Arguments::Version),
                 Arg::Value(cmd) => {
                     let args = parser.raw_args()?.collect::<Vec<_>>();
-                    return Ok(Arguments::Run { cmd, args });
+                    return Ok(Arguments::Run { cmd, args, total });
                 }
                 _ => return Err(arg.unexpected()),
             }
@@ -41,7 +46,7 @@ impl Arguments {
 
     fn run(self) -> Result<ExitCode, Error> {
         match self {
-            Arguments::Run { cmd, args } => run(cmd, args),
+            Arguments::Run { cmd, args, total } => run(cmd, args, total),
             Arguments::Help => {
                 write!(
                     io::stdout().lock(),
@@ -53,6 +58,7 @@ impl Arguments {
                         "Visit <https://github.com/jwodder/elapsed> for more information.\n",
                         "\n",
                         "Options:\n",
+                        "  -t, --total       Leave total elapsed time behind after command finishes\n",
                         "  -h, --help        Display this help message and exit\n",
                         "  -V, --version     Show the program version and exit\n",
                     )
@@ -89,12 +95,12 @@ fn main() -> ExitCode {
 }
 
 #[tokio::main(flavor = "current_thread")]
-async fn run(cmd: OsString, args: Vec<OsString>) -> Result<ExitCode, Error> {
+async fn run(cmd: OsString, args: Vec<OsString>, total: bool) -> Result<ExitCode, Error> {
     let statline = StatusLine::new();
     let stdout = io::stdout();
     let stderr = io::stderr();
     let stdout_is_tty = stdout.is_terminal();
-    let mut ticker = interval(Duration::from_secs(1));
+    let ticker = interval(Duration::from_secs(1));
     let mut p = Command::new(cmd)
         .args(args)
         .stdout(Stdio::piped())
@@ -102,46 +108,78 @@ async fn run(cmd: OsString, args: Vec<OsString>) -> Result<ExitCode, Error> {
         .kill_on_drop(true)
         .spawn()
         .map_err(Error::Spawn)?;
-    let mut pout = ByteLines::new(p.stdout.take().expect("Child.stdout should be Some"));
-    let mut perr = ByteLines::new(p.stderr.take().expect("Child.stderr should be Some"));
-    statline.print()?;
-    loop {
-        tokio::select! {
-            _ = ticker.tick() => {
-                statline.clear()?;
-                statline.print()?;
-            },
-            r = pout.next_line() => {
-                if stdout_is_tty {
-                    statline.clear()?;
+    let pout = ByteLines::new(p.stdout.take().expect("Child.stdout should be Some"));
+    let perr = ByteLines::new(p.stderr.take().expect("Child.stderr should be Some"));
+    let mut elapsing = Elapsing {
+        statline,
+        p,
+        pout,
+        perr,
+        stdout,
+        stderr,
+        stdout_is_tty,
+        ticker,
+    };
+    elapsing.statline.print()?;
+    let r = elapsing.event_loop().await;
+    if total {
+        elapsing.statline.print_total()?;
+    }
+    r
+}
+
+#[derive(Debug)]
+struct Elapsing {
+    statline: StatusLine,
+    p: Child,
+    pout: ByteLines<ChildStdout>,
+    perr: ByteLines<ChildStderr>,
+    stdout: io::Stdout,
+    stderr: io::Stderr,
+    stdout_is_tty: bool,
+    ticker: Interval,
+}
+
+impl Elapsing {
+    async fn event_loop(&mut self) -> Result<ExitCode, Error> {
+        loop {
+            tokio::select! {
+                _ = self.ticker.tick() => {
+                    self.statline.clear()?;
+                    self.statline.print()?;
+                },
+                r = self.pout.next_line() => {
+                    if self.stdout_is_tty {
+                        self.statline.clear()?;
+                    }
+                    let line = r.map_err(Error::ReadStdout)?;
+                    self.stdout.lock().write_all(&line).map_err(Error::Write)?;
+                    if self.stdout_is_tty {
+                        self.statline.print()?;
+                    }
                 }
-                let line = r.map_err(Error::ReadStdout)?;
-                stdout.lock().write_all(&line).map_err(Error::Write)?;
-                if stdout_is_tty {
-                    statline.print()?;
+                r = self.perr.next_line() => {
+                    self.statline.clear()?;
+                    let line = r.map_err(Error::ReadStderr)?;
+                    self.stderr.lock().write_all(&line).map_err(Error::Write)?;
+                    self.statline.print()?;
                 }
-            }
-            r = perr.next_line() => {
-                statline.clear()?;
-                let line = r.map_err(Error::ReadStderr)?;
-                stderr.lock().write_all(&line).map_err(Error::Write)?;
-                statline.print()?;
-            }
-            r = p.wait() => {
-                statline.clear()?;
-                let rc = r.map_err(Error::Wait)?;
-                if let Some(ret) = rc.code() {
-                    let ret = u8::try_from(ret & 255).unwrap_or(1);
-                    return Ok(ExitCode::from(ret));
-                } else {
-                    return Err(Error::Signal(rc));
+                r = self.p.wait() => {
+                    self.statline.clear()?;
+                    let rc = r.map_err(Error::Wait)?;
+                    if let Some(ret) = rc.code() {
+                        let ret = u8::try_from(ret & 255).unwrap_or(1);
+                        return Ok(ExitCode::from(ret));
+                    } else {
+                        return Err(Error::Signal(rc));
+                    }
                 }
-            }
-            r = tokio::signal::ctrl_c() => {
-                if r.is_ok() {
-                    statline.clear()?;
-                    return Ok(ExitCode::FAILURE);
-                } // Else: Keep your mouth shut?
+                r = tokio::signal::ctrl_c() => {
+                    if r.is_ok() {
+                        self.statline.clear()?;
+                        return Ok(ExitCode::FAILURE);
+                    } // Else: Keep your mouth shut?
+                }
             }
         }
     }
@@ -176,6 +214,14 @@ impl StatusLine {
     }
 
     fn print(&self) -> Result<(), Error> {
+        self.inner_print(false)
+    }
+
+    fn print_total(&self) -> Result<(), Error> {
+        self.inner_print(true)
+    }
+
+    fn inner_print(&self, nl: bool) -> Result<(), Error> {
         if let StatusLine::Active { start, err } = self {
             let elapsed = start.elapsed();
             let mut secs = elapsed.as_secs();
@@ -183,7 +229,10 @@ impl StatusLine {
             secs %= 3500;
             let minutes = secs / 60;
             secs %= 60;
-            let s = format!("Elapsed: {hours:02}:{minutes:02}:{secs:02}");
+            let mut s = format!("Elapsed: {hours:02}:{minutes:02}:{secs:02}");
+            if nl {
+                s.push('\n');
+            }
             let mut err = err.lock();
             err.write_all(s.as_bytes()).map_err(Error::Write)?;
             err.flush().map_err(Error::Write)?;
@@ -304,7 +353,8 @@ mod tests {
                 Arguments::from_parser(parser).unwrap(),
                 Arguments::Run {
                     cmd: "foo".into(),
-                    args: Vec::new()
+                    args: Vec::new(),
+                    total: false,
                 }
             );
         }
@@ -317,6 +367,7 @@ mod tests {
                 Arguments::Run {
                     cmd: "foo".into(),
                     args: vec!["bar".into()],
+                    total: false,
                 }
             );
         }
@@ -329,6 +380,7 @@ mod tests {
                 Arguments::Run {
                     cmd: "foo".into(),
                     args: vec!["--bar".into()],
+                    total: false,
                 }
             );
         }
@@ -341,6 +393,7 @@ mod tests {
                 Arguments::Run {
                     cmd: "foo".into(),
                     args: vec!["--help".into()],
+                    total: false,
                 }
             );
         }
@@ -364,13 +417,27 @@ mod tests {
         }
 
         #[test]
+        fn total() {
+            let parser = Parser::from_iter(["elapsed", "--total", "foo"]);
+            assert_eq!(
+                Arguments::from_parser(parser).unwrap(),
+                Arguments::Run {
+                    cmd: "foo".into(),
+                    args: Vec::new(),
+                    total: true,
+                }
+            );
+        }
+
+        #[test]
         fn double_dash_command() {
             let parser = Parser::from_iter(["elapsed", "--", "foo"]);
             assert_eq!(
                 Arguments::from_parser(parser).unwrap(),
                 Arguments::Run {
                     cmd: "foo".into(),
-                    args: Vec::new()
+                    args: Vec::new(),
+                    total: false,
                 }
             );
         }
@@ -382,7 +449,8 @@ mod tests {
                 Arguments::from_parser(parser).unwrap(),
                 Arguments::Run {
                     cmd: "--help".into(),
-                    args: Vec::new()
+                    args: Vec::new(),
+                    total: false,
                 }
             );
         }
@@ -395,6 +463,7 @@ mod tests {
                 Arguments::Run {
                     cmd: "foo".into(),
                     args: vec!["--".into(), "bar".into()],
+                    total: false,
                 }
             );
         }

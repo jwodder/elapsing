@@ -144,6 +144,56 @@ async fn sleepy() {
 }
 
 #[tokio::test]
+async fn sleepy_total() {
+    let mut screen = TestScreen::spawn(
+        pty_process::Command::new(env!("CARGO_BIN_EXE_elapsed"))
+            .arg("--total")
+            .arg("python3")
+            .arg(format!("{SCRIPTS_DIR}/sleepy.py")),
+    )
+    .unwrap();
+    screen
+        .wait_for_contents("Elapsed: 00:00:00", STARTUP_WAIT)
+        .await
+        .unwrap();
+    screen
+        .wait_for_contents("Starting...\nElapsed: 00:00:01", LAX_SECOND)
+        .await
+        .unwrap();
+    screen
+        .wait_for_contents("Starting...\nElapsed: 00:00:02", LAX_SECOND)
+        .await
+        .unwrap();
+    screen
+        .wait_for_contents(
+            "Starting...\nWorking...\nStdout is not a tty\nElapsed: 00:00:03",
+            LAX_SECOND,
+        )
+        .await
+        .unwrap();
+    screen
+        .wait_for_contents(
+            "Starting...\nWorking...\nStdout is not a tty\nElapsed: 00:00:04",
+            LAX_SECOND,
+        )
+        .await
+        .unwrap();
+    screen
+        .wait_for_contents(
+            "Starting...\nWorking...\nStdout is not a tty\nShutting down...\nElapsed: 00:00:05",
+            LAX_SECOND,
+        )
+        .await
+        .unwrap();
+    let r = screen.wait_for_exit().await.unwrap();
+    assert!(r.success());
+    assert_eq!(
+        screen.contents(),
+        "Starting...\nWorking...\nStdout is not a tty\nShutting down...\nElapsed: 00:00:06"
+    );
+}
+
+#[tokio::test]
 async fn read_stdin() {
     let mut infile = tempfile::tempfile().unwrap();
     infile.write_all(b"Apple\nBanana\nCoconut\n").unwrap();
