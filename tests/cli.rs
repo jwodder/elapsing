@@ -704,3 +704,60 @@ async fn ctrl_c_total() {
         "Starting...\nWorking...\nStdout is not a tty\nElapsed: 00:00:03"
     );
 }
+
+#[tokio::test]
+async fn multiline_format() {
+    let mut screen = TestScreen::spawn(
+        pty_process::Command::new(env!("CARGO_BIN_EXE_elapsed"))
+            .arg("--format")
+            .arg("Hours: %H%nMinutes: %M%nSeconds: %S")
+            .arg("python3")
+            .arg(format!("{SCRIPTS_DIR}/sleepy.py")),
+    )
+    .unwrap();
+    screen
+        .wait_for_contents("Hours: 00\nMinutes: 00\nSeconds: 00", STARTUP_WAIT)
+        .await
+        .unwrap();
+    screen
+        .wait_for_contents(
+            "Starting...\nHours: 00\nMinutes: 00\nSeconds: 01",
+            LAX_SECOND,
+        )
+        .await
+        .unwrap();
+    screen
+        .wait_for_contents(
+            "Starting...\nHours: 00\nMinutes: 00\nSeconds: 02",
+            LAX_SECOND,
+        )
+        .await
+        .unwrap();
+    screen
+        .wait_for_contents(
+            "Starting...\nWorking...\nStdout is not a tty\nHours: 00\nMinutes: 00\nSeconds: 03",
+            LAX_SECOND,
+        )
+        .await
+        .unwrap();
+    screen
+        .wait_for_contents(
+            "Starting...\nWorking...\nStdout is not a tty\nHours: 00\nMinutes: 00\nSeconds: 04",
+            LAX_SECOND,
+        )
+        .await
+        .unwrap();
+    screen
+        .wait_for_contents(
+            "Starting...\nWorking...\nStdout is not a tty\nShutting down...\nHours: 00\nMinutes: 00\nSeconds: 05",
+            LAX_SECOND,
+        )
+        .await
+        .unwrap();
+    let r = screen.wait_for_exit(LAX_SECOND).await.unwrap();
+    assert!(r.success());
+    assert_eq!(
+        screen.contents(),
+        "Starting...\nWorking...\nStdout is not a tty\nShutting down..."
+    );
+}
