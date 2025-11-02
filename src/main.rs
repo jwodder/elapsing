@@ -1,3 +1,4 @@
+use cfg_if::cfg_if;
 use lexopt::{Arg, Parser};
 use std::ffi::OsString;
 use std::future::Future;
@@ -17,11 +18,7 @@ const READ_BUFFER_SIZE: usize = 2048;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum Arguments {
-    Run {
-        cmd: OsString,
-        args: Vec<OsString>,
-        total: bool,
-    },
+    Run(Elapsed),
     Help,
     Version,
 }
@@ -29,14 +26,28 @@ enum Arguments {
 impl Arguments {
     fn from_parser(mut parser: Parser) -> Result<Arguments, lexopt::Error> {
         let mut total = false;
+        #[cfg(unix)]
+        let mut tty = false;
         while let Some(arg) = parser.next()? {
             match arg {
                 Arg::Short('t') | Arg::Long("total") => total = true,
+                #[cfg(unix)]
+                Arg::Short('T') | Arg::Long("tty") => tty = true,
+                #[cfg(not(unix))]
+                Arg::Short('T') | Arg::Long("tty") => {
+                    return Err("--tty is not supported on this system".into());
+                }
                 Arg::Short('h') | Arg::Long("help") => return Ok(Arguments::Help),
                 Arg::Short('V') | Arg::Long("version") => return Ok(Arguments::Version),
                 Arg::Value(cmd) => {
                     let args = parser.raw_args()?.collect::<Vec<_>>();
-                    return Ok(Arguments::Run { cmd, args, total });
+                    cfg_if! {
+                        if #[cfg(unix)] {
+                            return Ok(Arguments::Run(Elapsed { cmd, args, total, tty }));
+                        } else {
+                            return Ok(Arguments::Run(Elapsed { cmd, args, total }));
+                        }
+                    }
                 }
                 _ => return Err(arg.unexpected()),
             }
@@ -46,7 +57,7 @@ impl Arguments {
 
     fn run(self) -> Result<ExitCode, Error> {
         match self {
-            Arguments::Run { cmd, args, total } => run(cmd, args, total),
+            Arguments::Run(elapsed) => run(elapsed),
             Arguments::Help => {
                 write!(
                     io::stdout().lock(),
@@ -80,6 +91,69 @@ impl Arguments {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct Elapsed {
+    cmd: OsString,
+    args: Vec<OsString>,
+    total: bool,
+    #[cfg(unix)]
+    tty: bool,
+}
+
+impl Elapsed {
+    fn spawn(&self) -> Result<(Child, ByteLines<ChildOutput>, ByteLines<ChildOutput>), Error> {
+        cfg_if! {
+            if #[cfg(unix)] {
+                if self.tty {
+                    self.spawn_tty()
+                } else {
+                    self.spawn_plain()
+                }
+            } else {
+                self.spawn_plain()
+            }
+        }
+    }
+
+    fn spawn_plain(
+        &self,
+    ) -> Result<(Child, ByteLines<ChildOutput>, ByteLines<ChildOutput>), Error> {
+        let mut p = Command::new(&self.cmd)
+            .args(&self.args)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()
+            .map_err(Error::Spawn)?;
+        let pout = ByteLines::new(ChildOutput::Stdout(
+            p.stdout.take().expect("Child.stdout should be Some"),
+        ));
+        let perr = ByteLines::new(ChildOutput::Stderr(
+            p.stderr.take().expect("Child.stderr should be Some"),
+        ));
+        Ok((p, pout, perr))
+    }
+
+    fn spawn_tty(&self) -> Result<(Child, ByteLines<ChildOutput>, ByteLines<ChildOutput>), Error> {
+        let (pty, pts) = pty_process::open().map_err(Error::InitPty)?;
+        if let Some((width, height)) = terminal_size::terminal_size() {
+            pty.resize(pty_process::Size::new(width.0, height.0))
+                .map_err(Error::InitPty)?;
+        }
+        let p = pty_process::Command::new(&self.cmd)
+            .args(&self.args)
+            .stdin(Stdio::inherit())
+            .kill_on_drop(true)
+            .spawn(pts)
+            .map_err(Error::SpawnPty)?;
+        Ok((
+            p,
+            ByteLines::new(ChildOutput::Pty(pty)),
+            ByteLines::new(ChildOutput::Null),
+        ))
+    }
+}
+
 fn main() -> ExitCode {
     match Arguments::from_parser(Parser::from_env())
         .map_err(Error::Usage)
@@ -95,21 +169,13 @@ fn main() -> ExitCode {
 }
 
 #[tokio::main(flavor = "current_thread")]
-async fn run(cmd: OsString, args: Vec<OsString>, total: bool) -> Result<ExitCode, Error> {
+async fn run(app: Elapsed) -> Result<ExitCode, Error> {
     let statline = StatusLine::new();
     let stdout = io::stdout();
     let stderr = io::stderr();
     let stdout_is_tty = stdout.is_terminal();
     let ticker = interval(Duration::from_secs(1));
-    let mut p = Command::new(cmd)
-        .args(args)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true)
-        .spawn()
-        .map_err(Error::Spawn)?;
-    let pout = ByteLines::new(p.stdout.take().expect("Child.stdout should be Some"));
-    let perr = ByteLines::new(p.stderr.take().expect("Child.stderr should be Some"));
+    let (p, pout, perr) = app.spawn()?;
     let mut elapsing = Elapsing {
         statline,
         p,
@@ -122,18 +188,17 @@ async fn run(cmd: OsString, args: Vec<OsString>, total: bool) -> Result<ExitCode
     };
     elapsing.statline.print()?;
     let r = elapsing.event_loop().await;
-    if total {
+    if app.total {
         elapsing.statline.print_total()?;
     }
     r
 }
 
-#[derive(Debug)]
 struct Elapsing {
     statline: StatusLine,
     p: Child,
-    pout: ByteLines<ChildStdout>,
-    perr: ByteLines<ChildStderr>,
+    pout: ByteLines<ChildOutput>,
+    perr: ByteLines<ChildOutput>,
     stdout: io::Stdout,
     stderr: io::Stderr,
     stdout_is_tty: bool,
@@ -241,6 +306,48 @@ impl StatusLine {
     }
 }
 
+enum ChildOutput {
+    Stdout(ChildStdout),
+    Stderr(ChildStderr),
+    #[cfg(unix)]
+    Pty(pty_process::Pty),
+    #[cfg(unix)]
+    Null,
+}
+
+impl AsyncRead for ChildOutput {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        match &mut *self {
+            ChildOutput::Stdout(out) => {
+                let out = pin!(out);
+                out.poll_read(cx, buf)
+            }
+            ChildOutput::Stderr(err) => {
+                let err = pin!(err);
+                err.poll_read(cx, buf)
+            }
+            #[cfg(unix)]
+            ChildOutput::Pty(pty) => {
+                let pty = pin!(pty);
+                // On Linux, attempting to read from a pty master after the
+                // slave closes (due, e.g., to the child process exiting)
+                // results in EIO (which Rust currently represents with the
+                // undocumented ErrorKind::Uncategorized).
+                match ready!(pty.poll_read(cx, buf)) {
+                    Err(e) if e.raw_os_error() == Some(5) => Ok(()).into(),
+                    r => r.into(),
+                }
+            }
+            #[cfg(unix)]
+            ChildOutput::Null => Ok(()).into(),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct ByteLines<R> {
     reader: R,
@@ -331,6 +438,12 @@ enum Error {
     Wait(io::Error),
     #[error("child process killed by signal: {0}")]
     Signal(ExitStatus),
+    #[cfg(unix)]
+    #[error("error initializing pty: {0}")]
+    InitPty(pty_process::Error),
+    #[cfg(unix)]
+    #[error("failed to spawn child process on pty: {0}")]
+    SpawnPty(pty_process::Error),
 }
 
 impl Error {
@@ -345,57 +458,43 @@ mod tests {
 
     mod parse_args {
         use super::*;
+        use assert_matches::assert_matches;
 
         #[test]
         fn command_only() {
             let parser = Parser::from_iter(["elapsed", "foo"]);
-            assert_eq!(
-                Arguments::from_parser(parser).unwrap(),
-                Arguments::Run {
-                    cmd: "foo".into(),
-                    args: Vec::new(),
-                    total: false,
-                }
-            );
+            assert_matches!(Arguments::from_parser(parser).unwrap(), Arguments::Run(app) => {
+                assert_eq!(app.cmd, "foo");
+                assert!(app.args.is_empty());
+                assert!(!app.total);
+            });
         }
 
         #[test]
         fn command_with_arg() {
             let parser = Parser::from_iter(["elapsed", "foo", "bar"]);
-            assert_eq!(
-                Arguments::from_parser(parser).unwrap(),
-                Arguments::Run {
-                    cmd: "foo".into(),
-                    args: vec!["bar".into()],
-                    total: false,
-                }
-            );
+            assert_matches!(Arguments::from_parser(parser).unwrap(), Arguments::Run(app) => {
+                assert_eq!(app.cmd, "foo");
+                assert_eq!(app.args, ["bar"]);
+            });
         }
 
         #[test]
         fn command_with_opt() {
             let parser = Parser::from_iter(["elapsed", "foo", "--bar"]);
-            assert_eq!(
-                Arguments::from_parser(parser).unwrap(),
-                Arguments::Run {
-                    cmd: "foo".into(),
-                    args: vec!["--bar".into()],
-                    total: false,
-                }
-            );
+            assert_matches!(Arguments::from_parser(parser).unwrap(), Arguments::Run(app) => {
+                assert_eq!(app.cmd, "foo");
+                assert_eq!(app.args, ["--bar"]);
+            });
         }
 
         #[test]
         fn command_with_my_opt() {
             let parser = Parser::from_iter(["elapsed", "foo", "--help"]);
-            assert_eq!(
-                Arguments::from_parser(parser).unwrap(),
-                Arguments::Run {
-                    cmd: "foo".into(),
-                    args: vec!["--help".into()],
-                    total: false,
-                }
-            );
+            assert_matches!(Arguments::from_parser(parser).unwrap(), Arguments::Run(app) => {
+                assert_eq!(app.cmd, "foo");
+                assert_eq!(app.args, ["--help"]);
+            });
         }
 
         #[test]
@@ -419,53 +518,38 @@ mod tests {
         #[test]
         fn total() {
             let parser = Parser::from_iter(["elapsed", "--total", "foo"]);
-            assert_eq!(
-                Arguments::from_parser(parser).unwrap(),
-                Arguments::Run {
-                    cmd: "foo".into(),
-                    args: Vec::new(),
-                    total: true,
-                }
-            );
+            assert_matches!(Arguments::from_parser(parser).unwrap(), Arguments::Run(app) => {
+                assert_eq!(app.cmd, "foo");
+                assert!(app.args.is_empty());
+                assert!(app.total);
+            });
         }
 
         #[test]
         fn double_dash_command() {
             let parser = Parser::from_iter(["elapsed", "--", "foo"]);
-            assert_eq!(
-                Arguments::from_parser(parser).unwrap(),
-                Arguments::Run {
-                    cmd: "foo".into(),
-                    args: Vec::new(),
-                    total: false,
-                }
-            );
+            assert_matches!(Arguments::from_parser(parser).unwrap(), Arguments::Run(app) => {
+                assert_eq!(app.cmd, "foo");
+                assert!(app.args.is_empty());
+            });
         }
 
         #[test]
         fn double_dash_opt() {
             let parser = Parser::from_iter(["elapsed", "--", "--help"]);
-            assert_eq!(
-                Arguments::from_parser(parser).unwrap(),
-                Arguments::Run {
-                    cmd: "--help".into(),
-                    args: Vec::new(),
-                    total: false,
-                }
-            );
+            assert_matches!(Arguments::from_parser(parser).unwrap(), Arguments::Run(app) => {
+                assert_eq!(app.cmd, "--help");
+                assert!(app.args.is_empty());
+            });
         }
 
         #[test]
         fn command_double_dash() {
             let parser = Parser::from_iter(["elapsed", "foo", "--", "bar"]);
-            assert_eq!(
-                Arguments::from_parser(parser).unwrap(),
-                Arguments::Run {
-                    cmd: "foo".into(),
-                    args: vec!["--".into(), "bar".into()],
-                    total: false,
-                }
-            );
+            assert_matches!(Arguments::from_parser(parser).unwrap(), Arguments::Run(app) => {
+                assert_eq!(app.cmd, "foo");
+                assert_eq!(app.args, ["--", "bar"]);
+            });
         }
     }
 
