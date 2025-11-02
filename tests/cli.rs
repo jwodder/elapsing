@@ -1,4 +1,8 @@
 #![cfg(unix)]
+use nix::{
+    sys::signal::{SIGINT, kill},
+    unistd::Pid,
+};
 use std::io::{Seek, Write};
 use std::process::ExitStatus;
 use std::time::Duration;
@@ -389,4 +393,87 @@ async fn kill_sleepy() {
     assert!(screen.contents().starts_with(
         "Starting...\nWorking...\nStdout is not a tty\nelapsed: child process killed by signal: "
     ));
+}
+
+#[tokio::test]
+async fn ctrl_c() {
+    let mut screen = TestScreen::spawn(
+        pty_process::Command::new(env!("CARGO_BIN_EXE_elapsed"))
+            .arg("python3")
+            .arg(format!("{SCRIPTS_DIR}/sleepy.py")),
+    )
+    .unwrap();
+    screen
+        .wait_for_contents("Elapsed: 00:00:00", STARTUP_WAIT)
+        .await
+        .unwrap();
+    screen
+        .wait_for_contents("Starting...\nElapsed: 00:00:01", LAX_SECOND)
+        .await
+        .unwrap();
+    screen
+        .wait_for_contents("Starting...\nElapsed: 00:00:02", LAX_SECOND)
+        .await
+        .unwrap();
+    screen
+        .wait_for_contents(
+            "Starting...\nWorking...\nStdout is not a tty\nElapsed: 00:00:03",
+            LAX_SECOND,
+        )
+        .await
+        .unwrap();
+    let pid = Pid::from_raw(screen.p.id().unwrap().try_into().unwrap());
+    kill(pid, SIGINT).unwrap();
+    let r = screen
+        .wait_for_exit(Duration::from_millis(100))
+        .await
+        .unwrap();
+    assert!(!r.success());
+    assert_eq!(r.code(), Some(1));
+    assert_eq!(
+        screen.contents(),
+        "Starting...\nWorking...\nStdout is not a tty"
+    );
+}
+
+#[tokio::test]
+async fn ctrl_c_total() {
+    let mut screen = TestScreen::spawn(
+        pty_process::Command::new(env!("CARGO_BIN_EXE_elapsed"))
+            .arg("--total")
+            .arg("python3")
+            .arg(format!("{SCRIPTS_DIR}/sleepy.py")),
+    )
+    .unwrap();
+    screen
+        .wait_for_contents("Elapsed: 00:00:00", STARTUP_WAIT)
+        .await
+        .unwrap();
+    screen
+        .wait_for_contents("Starting...\nElapsed: 00:00:01", LAX_SECOND)
+        .await
+        .unwrap();
+    screen
+        .wait_for_contents("Starting...\nElapsed: 00:00:02", LAX_SECOND)
+        .await
+        .unwrap();
+    screen
+        .wait_for_contents(
+            "Starting...\nWorking...\nStdout is not a tty\nElapsed: 00:00:03",
+            LAX_SECOND,
+        )
+        .await
+        .unwrap();
+    let pid = Pid::from_raw(screen.p.id().unwrap().try_into().unwrap());
+    kill(pid, SIGINT).unwrap();
+    let r = screen
+        .wait_for_exit(Duration::from_millis(100))
+        .await
+        .unwrap();
+    assert!(!r.success());
+    assert_eq!(r.code(), Some(1));
+    assert_eq!(
+        screen.contents(),
+        "Starting...\nWorking...\nStdout is not a tty\nElapsed: 00:00:03"
+    );
 }
