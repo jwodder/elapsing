@@ -328,3 +328,65 @@ async fn closer() {
         "This is the last time I write to stdout!\nAnd THIS is the last time I write to stderr!",
     );
 }
+
+#[tokio::test]
+async fn failure() {
+    let mut screen = TestScreen::spawn(
+        pty_process::Command::new(env!("CARGO_BIN_EXE_elapsed"))
+            .arg("python3")
+            .arg(format!("{SCRIPTS_DIR}/failure.py")),
+    )
+    .unwrap();
+    screen
+        .wait_for_contents("I'm dying!\nElapsed: 00:00:00", STARTUP_AND_PRINT_WAIT)
+        .await
+        .unwrap();
+    let r = screen.wait_for_exit(LAX_SECOND).await.unwrap();
+    assert!(!r.success());
+    assert_eq!(r.code(), Some(42));
+    assert_eq!(screen.contents(), "I'm dying!");
+}
+
+#[tokio::test]
+async fn kill_sleepy() {
+    let mut screen = TestScreen::spawn(
+        pty_process::Command::new(env!("CARGO_BIN_EXE_elapsed"))
+            .arg("python3")
+            .arg(format!("{SCRIPTS_DIR}/sleepy.py")),
+    )
+    .unwrap();
+    screen
+        .wait_for_contents("Elapsed: 00:00:00", STARTUP_WAIT)
+        .await
+        .unwrap();
+    screen
+        .wait_for_contents("Starting...\nElapsed: 00:00:01", LAX_SECOND)
+        .await
+        .unwrap();
+    screen
+        .wait_for_contents("Starting...\nElapsed: 00:00:02", LAX_SECOND)
+        .await
+        .unwrap();
+    screen
+        .wait_for_contents(
+            "Starting...\nWorking...\nStdout is not a tty\nElapsed: 00:00:03",
+            LAX_SECOND,
+        )
+        .await
+        .unwrap();
+    let r = std::process::Command::new("pkill")
+        .arg("-P")
+        .arg(format!("{}", screen.p.id().unwrap()))
+        .status()
+        .unwrap();
+    assert!(r.success());
+    let r = screen
+        .wait_for_exit(Duration::from_millis(100))
+        .await
+        .unwrap();
+    assert!(!r.success());
+    assert_eq!(r.code(), Some(1));
+    assert!(screen.contents().starts_with(
+        "Starting...\nWorking...\nStdout is not a tty\nelapsed: child process killed by signal: "
+    ));
+}
