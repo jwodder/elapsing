@@ -166,16 +166,14 @@ impl Elapsed {
             cmd = cmd.stderr(Stdio::piped());
         }
         let mut p = cmd.spawn(pts).map_err(Error::SpawnPty)?;
+        let mut pout = ByteLines::new(ChildOutput::Pty(pty));
+        pout.strip_cr = true;
         let perr = if self.split_stderr {
             ChildOutput::Stderr(p.stderr.take().expect("Child.stderr should be Some"))
         } else {
             ChildOutput::Null
         };
-        Ok((
-            p,
-            ByteLines::new(ChildOutput::Pty(pty)),
-            ByteLines::new(perr),
-        ))
+        Ok((p, pout, ByteLines::new(perr)))
     }
 }
 
@@ -379,6 +377,7 @@ struct ByteLines<R> {
     buffer: Vec<u8>,
     next_index: usize,
     eof: bool,
+    strip_cr: bool,
 }
 
 impl<R> ByteLines<R> {
@@ -388,11 +387,12 @@ impl<R> ByteLines<R> {
             buffer: Vec::new(),
             next_index: 0,
             eof: false,
+            strip_cr: false,
         }
     }
 
     fn get_line(&mut self) -> Option<Vec<u8>> {
-        if let Some(i) = self.buffer[self.next_index..]
+        let mut r = if let Some(i) = self.buffer[self.next_index..]
             .iter()
             .position(|&b| b == b'\n')
         {
@@ -406,7 +406,17 @@ impl<R> ByteLines<R> {
         } else {
             self.next_index = self.buffer.len();
             None
+        };
+        if self.strip_cr {
+            if let Some(buf) = &mut r {
+                let n = buf.len();
+                if n >= 2 && buf[n - 2] == b'\r' && buf[n - 1] == b'\n' {
+                    buf[n - 2] = b'\n';
+                    buf.truncate(n - 1);
+                }
+            }
         }
+        r
     }
 
     fn next_line<'a>(&'a mut self) -> NextLine<'a, R> {
@@ -625,6 +635,17 @@ mod tests {
             let mut lines = ByteLines::new(reader);
             assert_eq!(lines.next_line().await.unwrap(), b"Hell\xF6!\n");
             assert_eq!(lines.next_line().await.unwrap(), b"I like your code.\n");
+            assert_eq!(lines.next_line().await.unwrap(), b"Goodbye!\n");
+            let mut fut = spawn(lines.next_line());
+            assert_pending!(fut.poll());
+        }
+
+        #[tokio::test]
+        async fn strip_cr() {
+            let reader = Cursor::new(b"Hello!\r\nGoodbye!\n");
+            let mut lines = ByteLines::new(reader);
+            lines.strip_cr = true;
+            assert_eq!(lines.next_line().await.unwrap(), b"Hello!\n");
             assert_eq!(lines.next_line().await.unwrap(), b"Goodbye!\n");
             let mut fut = spawn(lines.next_line());
             assert_pending!(fut.poll());
