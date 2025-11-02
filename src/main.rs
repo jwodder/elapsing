@@ -79,7 +79,7 @@ impl Arguments {
                         "Options:\n",
                         "  -t, --total       Leave total elapsed time behind after command finishes\n",
                         "\n",
-                        "  -T, --tty         Run command in a pseudo-terminal [Unix only]\n",
+                        "  -T, --tty         Run command via a pseudo-terminal [Unix only]\n",
                         "\n",
                         "  -S, --split-stderr\n",
                         "                    When used with --tty, send the command's stderr directly to\n",
