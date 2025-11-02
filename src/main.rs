@@ -215,6 +215,19 @@ async fn run(app: Elapsed) -> Result<ExitCode, Error> {
     if app.total {
         elapsing.statline.print_total()?;
     }
+    if r.is_err() {
+        // The child process is still running, so get rid of it.  We do use
+        // `kill_on_drop()`, but here that's only useful for the case where
+        // `elapsed` receives a Ctrl-C, which would normally leave us without a
+        // chance to clean up and, 99% of the time, will be delivered to the
+        // child as well.
+        if let Err(e) = elapsing.p.kill().await {
+            let _ = writeln!(
+                elapsing.stderr.lock(),
+                "elapsed: failed to clean up child process: {e}"
+            );
+        }
+    }
     r
 }
 
