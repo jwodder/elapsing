@@ -35,8 +35,9 @@ will not be shown.
 
 When the command exits, the status line is erased (unless the `-t`/`--total`
 option was given), and `elapsed` exits with the same return code as the
-command; if the command was killed by a signal, a message is printed to stderr,
-and `elapsed` exits with return code 1 instead.
+command; if the command was killed by a signal, a message is printed to stderr
+(after any `--total` status line), and `elapsed` exits with return code 1
+instead.
 
 Options
 -------
