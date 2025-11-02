@@ -17,9 +17,12 @@ Installation
 
 In order to install `elapsed`, you first need to have [Rust and Cargo
 installed](https://www.rust-lang.org/tools/install).  You can then build the
-latest version of `elapsed` and install it in `~/.cargo/bin` by running:
+latest release of `elapsed` and install it in `~/.cargo/bin` by running:
 
-    cargo install --git https://github.com/jwodder/elapsed
+    cargo install elapsed-cmd
+
+(Note that the name of the package on crates.io is "elapsed-cmd"; just
+"elapsed" was already taken.)
 
 
 Usage
