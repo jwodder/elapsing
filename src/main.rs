@@ -29,6 +29,7 @@ enum Arguments {
 impl Arguments {
     fn from_parser(mut parser: Parser) -> Result<Arguments, lexopt::Error> {
         let mut format: Option<Format> = None;
+        let mut refresh_period = Duration::from_secs(1);
         let mut total = false;
         #[cfg(unix)]
         let mut tty = false;
@@ -37,6 +38,9 @@ impl Arguments {
         while let Some(arg) = parser.next()? {
             match arg {
                 Arg::Short('f') | Arg::Long("format") => format = Some(parser.value()?.parse()?),
+                Arg::Short('r') | Arg::Long("refresh") => {
+                    refresh_period = Duration::from_millis(parser.value()?.parse()?);
+                }
                 Arg::Short('S') | Arg::Long("split-stderr") => {
                     cfg_if! {
                         if #[cfg(unix)] {
@@ -63,9 +67,9 @@ impl Arguments {
                     let format = format.unwrap_or_default();
                     cfg_if! {
                         if #[cfg(unix)] {
-                            return Ok(Arguments::Run(Elapsed { cmd, args, format, total, tty, split_stderr }));
+                            return Ok(Arguments::Run(Elapsed { cmd, args, format, refresh_period, total, tty, split_stderr }));
                         } else {
-                            return Ok(Arguments::Run(Elapsed { cmd, args, format, total }));
+                            return Ok(Arguments::Run(Elapsed { cmd, args, format, refresh_period, total }));
                         }
                     }
                 }
@@ -104,6 +108,10 @@ impl Arguments {
                         "                    - %% - percent sign\n",
                         "                    - \\\\ - backslash\n",
                         "\n",
+                        "  -r <INT>, --refresh <INT>\n",
+                        "                    Update the status line after every <INT> milliseconds\n",
+                        "                    [default: 1000 (once per second)]\n",
+                        "\n",
                         "  -t, --total       Leave total elapsed time behind after command finishes\n",
                         "\n",
                         "  -T, --tty         Run command via a pseudo-terminal [Unix only]\n",
@@ -139,6 +147,7 @@ struct Elapsed {
     cmd: OsString,
     args: Vec<OsString>,
     format: Format,
+    refresh_period: Duration,
     total: bool,
     #[cfg(unix)]
     tty: bool,
@@ -226,7 +235,7 @@ async fn run(app: Elapsed) -> Result<ExitCode, Error> {
     let stdout = io::stdout();
     let stderr = io::stderr();
     let stdout_is_tty = stdout.is_terminal();
-    let ticker = interval(Duration::from_secs(1));
+    let ticker = interval(app.refresh_period);
     let (p, pout, perr) = app.spawn()?;
     let mut elapsing = Elapsing {
         statline,

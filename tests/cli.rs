@@ -22,6 +22,25 @@ const STARTUP_WAIT: Duration = Duration::from_millis(100);
 const STARTUP_AND_PRINT_WAIT: Duration = Duration::from_millis(500);
 const LAX_SECOND: Duration = Duration::from_millis(1500);
 
+trait StrMatcher: std::fmt::Debug {
+    fn matches(&self, s: &str) -> bool;
+}
+
+impl StrMatcher for &str {
+    fn matches(&self, s: &str) -> bool {
+        *self == s
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct StartsWith(&'static str);
+
+impl StrMatcher for StartsWith {
+    fn matches(&self, s: &str) -> bool {
+        s.starts_with(self.0)
+    }
+}
+
 struct TestScreen {
     parser: vt100::Parser,
     p: tokio::process::Child,
@@ -62,9 +81,9 @@ impl TestScreen {
     }
 
     #[allow(clippy::match_wild_err_arm)]
-    async fn wait_for_contents(
+    async fn wait_for_contents<M: StrMatcher>(
         &mut self,
-        expected: &str,
+        expected: M,
         timeout: Duration,
     ) -> std::io::Result<()> {
         let deadline = Instant::now() + timeout;
@@ -72,7 +91,7 @@ impl TestScreen {
             match timeout_at(deadline, self.read()).await {
                 Ok(Ok(Some(buf))) => {
                     self.parser.process(&buf);
-                    if self.contents() == expected {
+                    if expected.matches(&self.contents()) {
                         return Ok(());
                     }
                 }
@@ -760,4 +779,37 @@ async fn multiline_format() {
         screen.contents(),
         "Starting...\nWorking...\nStdout is not a tty\nShutting down..."
     );
+}
+
+#[tokio::test]
+async fn custom_refresh() {
+    let mut screen = TestScreen::spawn(
+        pty_process::Command::new(env!("CARGO_BIN_EXE_elapsed"))
+            .arg("-f")
+            .arg("Time: %s.%1f")
+            .arg("-r100")
+            .arg("python3")
+            .arg(format!("{SCRIPTS_DIR}/failure.py")),
+    )
+    .unwrap();
+    screen
+        .wait_for_contents(StartsWith("I'm dying!\n"), STARTUP_AND_PRINT_WAIT)
+        .await
+        .unwrap();
+    let contents = screen.contents();
+    let i = contents
+        .strip_prefix("I'm dying!\nTime: 0.")
+        .unwrap()
+        .parse::<usize>()
+        .unwrap();
+    for j in (i + 1)..10 {
+        screen
+            .wait_for_contents(format!("I'm dying!\nTime: 0.{j}").as_str(), LAX_SECOND / 10)
+            .await
+            .unwrap();
+    }
+    let r = screen.wait_for_exit(LAX_SECOND / 5).await.unwrap();
+    assert!(!r.success());
+    assert_eq!(r.code(), Some(42));
+    assert_eq!(screen.contents(), "I'm dying!");
 }
