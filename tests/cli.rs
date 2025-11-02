@@ -212,6 +212,56 @@ async fn sleepy_total() {
 }
 
 #[tokio::test]
+async fn sleepy_tty() {
+    let mut screen = TestScreen::spawn(
+        pty_process::Command::new(env!("CARGO_BIN_EXE_elapsed"))
+            .arg("--tty")
+            .arg("python3")
+            .arg(format!("{SCRIPTS_DIR}/sleepy.py")),
+    )
+    .unwrap();
+    screen
+        .wait_for_contents("Elapsed: 00:00:00", STARTUP_WAIT)
+        .await
+        .unwrap();
+    screen
+        .wait_for_contents("Starting...\nElapsed: 00:00:01", LAX_SECOND)
+        .await
+        .unwrap();
+    screen
+        .wait_for_contents("Starting...\nElapsed: 00:00:02", LAX_SECOND)
+        .await
+        .unwrap();
+    screen
+        .wait_for_contents(
+            "Starting...\nWorking...\nStdout is a tty\nElapsed: 00:00:03",
+            LAX_SECOND,
+        )
+        .await
+        .unwrap();
+    screen
+        .wait_for_contents(
+            "Starting...\nWorking...\nStdout is a tty\nElapsed: 00:00:04",
+            LAX_SECOND,
+        )
+        .await
+        .unwrap();
+    screen
+        .wait_for_contents(
+            "Starting...\nWorking...\nStdout is a tty\nShutting down...\nElapsed: 00:00:05",
+            LAX_SECOND,
+        )
+        .await
+        .unwrap();
+    let r = screen.wait_for_exit(LAX_SECOND).await.unwrap();
+    assert!(r.success());
+    assert_eq!(
+        screen.contents(),
+        "Starting...\nWorking...\nStdout is a tty\nShutting down..."
+    );
+}
+
+#[tokio::test]
 async fn read_stdin() {
     let mut infile = tempfile::tempfile().unwrap();
     infile.write_all(b"Apple\nBanana\nCoconut\n").unwrap();
@@ -219,6 +269,46 @@ async fn read_stdin() {
     infile.rewind().unwrap();
     let mut screen = TestScreen::spawn(
         pty_process::Command::new(env!("CARGO_BIN_EXE_elapsed"))
+            .arg("python3")
+            .arg(format!("{SCRIPTS_DIR}/read-stdin.py"))
+            .stdin(infile),
+    )
+    .unwrap();
+    screen
+        .wait_for_contents("Line 1: Apple\nElapsed: 00:00:01", LAX_SECOND)
+        .await
+        .unwrap();
+    screen
+        .wait_for_contents(
+            "Line 1: Apple\nLine 2: Banana\nElapsed: 00:00:02",
+            LAX_SECOND,
+        )
+        .await
+        .unwrap();
+    screen
+        .wait_for_contents(
+            "Line 1: Apple\nLine 2: Banana\nLine 3: Coconut\nElapsed: 00:00:03",
+            LAX_SECOND,
+        )
+        .await
+        .unwrap();
+    let r = screen.wait_for_exit(LAX_SECOND).await.unwrap();
+    assert!(r.success());
+    assert_eq!(
+        screen.contents(),
+        "Line 1: Apple\nLine 2: Banana\nLine 3: Coconut",
+    );
+}
+
+#[tokio::test]
+async fn read_stdin_tty() {
+    let mut infile = tempfile::tempfile().unwrap();
+    infile.write_all(b"Apple\nBanana\nCoconut\n").unwrap();
+    infile.flush().unwrap();
+    infile.rewind().unwrap();
+    let mut screen = TestScreen::spawn(
+        pty_process::Command::new(env!("CARGO_BIN_EXE_elapsed"))
+            .arg("--tty")
             .arg("python3")
             .arg(format!("{SCRIPTS_DIR}/read-stdin.py"))
             .stdin(infile),
@@ -281,12 +371,102 @@ async fn write_stderr() {
 }
 
 #[tokio::test]
+async fn write_stderr_tty() {
+    let mut screen = TestScreen::spawn(
+        pty_process::Command::new(env!("CARGO_BIN_EXE_elapsed"))
+            .arg("--tty")
+            .arg("python3")
+            .arg(format!("{SCRIPTS_DIR}/write-stderr.py")),
+    )
+    .unwrap();
+    screen
+        .wait_for_contents(
+            "This goes to stdout.\nElapsed: 00:00:00",
+            STARTUP_AND_PRINT_WAIT,
+        )
+        .await
+        .unwrap();
+
+    screen
+        .wait_for_contents(
+            "This goes to stdout.\nAnd this goes to stderr.\nElapsed: 00:00:01",
+            LAX_SECOND,
+        )
+        .await
+        .unwrap();
+
+    let r = screen.wait_for_exit(LAX_SECOND).await.unwrap();
+    assert!(r.success());
+    assert_eq!(
+        screen.contents(),
+        "This goes to stdout.\nAnd this goes to stderr.\nBack to stdout.",
+    );
+}
+
+#[tokio::test]
 async fn redir_stderr() {
     let scratch = tempfile::tempdir().unwrap();
     let errfile = std::fs::File::create(scratch.path().join("stderr")).unwrap();
     let mut screen = TestScreen::spawn(
         pty_process::Command::new(env!("CARGO_BIN_EXE_elapsed"))
             .arg("--total")
+            .arg("python3")
+            .arg(format!("{SCRIPTS_DIR}/write-stderr.py"))
+            .stderr(errfile),
+    )
+    .unwrap();
+    screen
+        .wait_for_contents("This goes to stdout.", STARTUP_AND_PRINT_WAIT)
+        .await
+        .unwrap();
+    let r = screen.wait_for_exit(LAX_SECOND * 2).await.unwrap();
+    assert!(r.success());
+    assert_eq!(screen.contents(), "This goes to stdout.\nBack to stdout.",);
+    let err = std::fs::read(scratch.path().join("stderr")).unwrap();
+    let err = String::from_utf8(err).unwrap();
+    assert_eq!(err, "And this goes to stderr.\n");
+}
+
+#[tokio::test]
+async fn redir_stderr_tty() {
+    let scratch = tempfile::tempdir().unwrap();
+    let errfile = std::fs::File::create(scratch.path().join("stderr")).unwrap();
+    let mut screen = TestScreen::spawn(
+        pty_process::Command::new(env!("CARGO_BIN_EXE_elapsed"))
+            .arg("--total")
+            .arg("--tty")
+            .arg("python3")
+            .arg(format!("{SCRIPTS_DIR}/write-stderr.py"))
+            .stderr(errfile),
+    )
+    .unwrap();
+    screen
+        .wait_for_contents("This goes to stdout.", STARTUP_AND_PRINT_WAIT)
+        .await
+        .unwrap();
+    screen
+        .wait_for_contents("This goes to stdout.\nAnd this goes to stderr.", LAX_SECOND)
+        .await
+        .unwrap();
+    let r = screen.wait_for_exit(LAX_SECOND * 2).await.unwrap();
+    assert!(r.success());
+    assert_eq!(
+        screen.contents(),
+        "This goes to stdout.\nAnd this goes to stderr.\nBack to stdout.",
+    );
+    let err = std::fs::read(scratch.path().join("stderr")).unwrap();
+    assert!(err.is_empty());
+}
+
+#[tokio::test]
+async fn redir_stderr_tty_split() {
+    let scratch = tempfile::tempdir().unwrap();
+    let errfile = std::fs::File::create(scratch.path().join("stderr")).unwrap();
+    let mut screen = TestScreen::spawn(
+        pty_process::Command::new(env!("CARGO_BIN_EXE_elapsed"))
+            .arg("--total")
+            .arg("--tty")
+            .arg("--split-stderr")
             .arg("python3")
             .arg(format!("{SCRIPTS_DIR}/write-stderr.py"))
             .stderr(errfile),
