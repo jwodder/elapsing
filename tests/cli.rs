@@ -232,3 +232,42 @@ async fn read_stdin() {
         "Line 1: Apple\nLine 2: Banana\nLine 3: Coconut",
     );
 }
+
+#[tokio::test]
+async fn redir_stderr() {
+    let scratch = tempfile::tempdir().unwrap();
+    let errfile = std::fs::File::create(scratch.path().join("stderr")).unwrap();
+    let mut screen = TestScreen::spawn(
+        pty_process::Command::new(env!("CARGO_BIN_EXE_elapsed"))
+            .arg("python3")
+            .arg(format!("{SCRIPTS_DIR}/sleepy.py"))
+            .stderr(errfile),
+    )
+    .unwrap();
+    screen
+        .wait_for_contents("Starting...", LAX_SECOND)
+        .await
+        .unwrap();
+    screen
+        .wait_for_contents(
+            "Starting...\nWorking...\nStdout is not a tty",
+            LAX_SECOND * 2,
+        )
+        .await
+        .unwrap();
+    screen
+        .wait_for_contents(
+            "Starting...\nWorking...\nStdout is not a tty\nShutting down...",
+            LAX_SECOND * 2,
+        )
+        .await
+        .unwrap();
+    let r = screen.wait_for_exit().await.unwrap();
+    assert!(r.success());
+    assert_eq!(
+        screen.contents(),
+        "Starting...\nWorking...\nStdout is not a tty\nShutting down..."
+    );
+    let err = std::fs::read(scratch.path().join("stderr")).unwrap();
+    assert!(err.is_empty());
+}
