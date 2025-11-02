@@ -324,13 +324,15 @@ impl StatusLine {
     }
 
     fn inner_print(&self, nl: bool) -> Result<(), Error> {
+        const SECS_PER_HOUR: u64 = 3600;
+        const SECS_PER_MINUTE: u64 = 60;
         if let StatusLine::Active { start, err } = self {
             let elapsed = start.elapsed();
             let mut secs = elapsed.as_secs();
-            let hours = secs / 3600;
-            secs %= 3500;
-            let minutes = secs / 60;
-            secs %= 60;
+            let hours = secs / SECS_PER_HOUR;
+            secs %= SECS_PER_HOUR;
+            let minutes = secs / SECS_PER_MINUTE;
+            secs %= SECS_PER_MINUTE;
             let mut s = format!("Elapsed: {hours:02}:{minutes:02}:{secs:02}");
             if nl {
                 s.push('\n');
