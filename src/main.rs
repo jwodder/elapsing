@@ -70,6 +70,7 @@ impl Arguments {
                         "\n",
                         "Options:\n",
                         "  -t, --total       Leave total elapsed time behind after command finishes\n",
+                        "  -T, --tty         Run command in a pseudo-terminal [Unix only]\n",
                         "  -h, --help        Display this help message and exit\n",
                         "  -V, --version     Show the program version and exit\n",
                     )
