@@ -63,6 +63,9 @@ Options
 
     The default template is "`Elapsed: %H:%M:%S`."
 
+- `-r <INT>`, `--refresh <INT>` — Update the status line after every `<INT>`
+  milliseconds [default: 1000 (once per second)]
+
 - `-t`, `--total` — Leave the total elapsed time behind after the command finishes
 
 - `-T`, `--tty` — Run the command via a pseudo-terminal.  This is useful if the
