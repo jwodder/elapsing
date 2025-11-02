@@ -33,12 +33,15 @@ status line written to standard error below the command's output and updated
 once per second.  If `elapsed`'s standard error is redirected, the status line
 will not be shown.
 
-When the command exits, the status line is erased, and `elapsed` exits with the
-same return code as the command; if the command was killed by a signal, a
-message is printed to stderr, and `elapsed` exits with return code 1 instead.
+When the command exits, the status line is erased (unless the `-t`/`--total`
+option was given), and `elapsed` exits with the same return code as the
+command; if the command was killed by a signal, a message is printed to stderr,
+and `elapsed` exits with return code 1 instead.
 
 Options
 -------
+
+- `-t`, `--total` — Leave the total elapsed time behind after the command finishes
 
 - `-h`, `--help` — Show command-line usage
 
