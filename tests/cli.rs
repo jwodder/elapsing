@@ -13,6 +13,9 @@ const SCREEN_WIDTH: u16 = 24;
 const SCREEN_HEIGHT: u16 = 80;
 
 const STARTUP_WAIT: Duration = Duration::from_millis(100);
+// GitHub Actions' macOS runners have speed issues, so we need to wait a little
+// longer when waiting for `elapsed` to echo a subprocess's initial output:
+const STARTUP_AND_PRINT_WAIT: Duration = Duration::from_millis(500);
 const LAX_SECOND: Duration = Duration::from_millis(1500);
 
 struct TestScreen {
@@ -252,7 +255,10 @@ async fn write_stderr() {
     )
     .unwrap();
     screen
-        .wait_for_contents("This goes to stdout.\nElapsed: 00:00:00", STARTUP_WAIT)
+        .wait_for_contents(
+            "This goes to stdout.\nElapsed: 00:00:00",
+            STARTUP_AND_PRINT_WAIT,
+        )
         .await
         .unwrap();
     screen
@@ -282,7 +288,7 @@ async fn redir_stderr() {
     )
     .unwrap();
     screen
-        .wait_for_contents("This goes to stdout.", Duration::from_millis(500))
+        .wait_for_contents("This goes to stdout.", STARTUP_AND_PRINT_WAIT)
         .await
         .unwrap();
     let r = screen.wait_for_exit(LAX_SECOND * 2).await.unwrap();
@@ -304,7 +310,7 @@ async fn closer() {
     screen
         .wait_for_contents(
             "This is the last time I write to stdout!\nElapsed: 00:00:00",
-            STARTUP_WAIT,
+            STARTUP_AND_PRINT_WAIT,
         )
         .await
         .unwrap();
