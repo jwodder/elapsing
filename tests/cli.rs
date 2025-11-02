@@ -328,3 +328,21 @@ async fn closer() {
         "This is the last time I write to stdout!\nAnd THIS is the last time I write to stderr!",
     );
 }
+
+#[tokio::test]
+async fn failure() {
+    let mut screen = TestScreen::spawn(
+        pty_process::Command::new(env!("CARGO_BIN_EXE_elapsed"))
+            .arg("python3")
+            .arg(format!("{SCRIPTS_DIR}/failure.py")),
+    )
+    .unwrap();
+    screen
+        .wait_for_contents("I'm dying!\nElapsed: 00:00:00", STARTUP_AND_PRINT_WAIT)
+        .await
+        .unwrap();
+    let r = screen.wait_for_exit(LAX_SECOND).await.unwrap();
+    assert!(!r.success());
+    assert_eq!(r.code(), Some(42));
+    assert_eq!(screen.contents(), "I'm dying!");
+}
