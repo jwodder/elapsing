@@ -13,6 +13,9 @@ const SCREEN_WIDTH: u16 = 24;
 const SCREEN_HEIGHT: u16 = 80;
 
 const STARTUP_WAIT: Duration = Duration::from_millis(100);
+// GitHub Actions' macOS runners have speed issues, so we need to wait a little
+// longer when waiting for `elapsed` to echo a subprocess's initial output:
+const STARTUP_AND_PRINT_WAIT: Duration = Duration::from_millis(500);
 const LAX_SECOND: Duration = Duration::from_millis(1500);
 
 struct TestScreen {
@@ -252,7 +255,10 @@ async fn write_stderr() {
     )
     .unwrap();
     screen
-        .wait_for_contents("This goes to stdout.\nElapsed: 00:00:00", STARTUP_WAIT)
+        .wait_for_contents(
+            "This goes to stdout.\nElapsed: 00:00:00",
+            STARTUP_AND_PRINT_WAIT,
+        )
         .await
         .unwrap();
     screen
@@ -282,7 +288,7 @@ async fn redir_stderr() {
     )
     .unwrap();
     screen
-        .wait_for_contents("This goes to stdout.", Duration::from_millis(500))
+        .wait_for_contents("This goes to stdout.", STARTUP_AND_PRINT_WAIT)
         .await
         .unwrap();
     let r = screen.wait_for_exit(LAX_SECOND * 2).await.unwrap();
@@ -291,4 +297,34 @@ async fn redir_stderr() {
     let err = std::fs::read(scratch.path().join("stderr")).unwrap();
     let err = String::from_utf8(err).unwrap();
     assert_eq!(err, "And this goes to stderr.\n");
+}
+
+#[tokio::test]
+async fn closer() {
+    let mut screen = TestScreen::spawn(
+        pty_process::Command::new(env!("CARGO_BIN_EXE_elapsed"))
+            .arg("python3")
+            .arg(format!("{SCRIPTS_DIR}/closer.py")),
+    )
+    .unwrap();
+    screen
+        .wait_for_contents(
+            "This is the last time I write to stdout!\nElapsed: 00:00:00",
+            STARTUP_AND_PRINT_WAIT,
+        )
+        .await
+        .unwrap();
+    screen
+        .wait_for_contents(
+            "This is the last time I write to stdout!\nAnd THIS is the last time I write to stderr!\nElapsed: 00:00:01",
+            LAX_SECOND,
+        )
+        .await
+        .unwrap();
+    let r = screen.wait_for_exit(LAX_SECOND).await.unwrap();
+    assert!(r.success());
+    assert_eq!(
+        screen.contents(),
+        "This is the last time I write to stdout!\nAnd THIS is the last time I write to stderr!",
+    );
 }
