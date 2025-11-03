@@ -1,5 +1,5 @@
-v0.2.1 (in development)
------------------------
+v0.2.1 (2025-11-03)
+-------------------
 - **Bugfix**: Ensure that all output from the child process is read & echoed
   before exiting
 
