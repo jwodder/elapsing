@@ -281,37 +281,53 @@ struct Elapsing {
 
 impl Elapsing {
     async fn event_loop(&mut self) -> Result<ExitCode, Error> {
+        let mut stdout_eof = false;
+        let mut stderr_eof = false;
+        let mut exit_code = None;
         loop {
+            if stdout_eof && stderr_eof {
+                if let Some(rc) = exit_code {
+                    self.statline.clear()?;
+                    return Ok(rc);
+                }
+            }
             tokio::select! {
                 _ = self.ticker.tick() => {
                     self.statline.clear()?;
                     self.statline.print()?;
                 },
-                r = self.pout.next_line() => {
+                r = self.pout.next_line(), if !stdout_eof => {
                     if self.stdout_is_tty {
                         self.statline.clear()?;
                     }
-                    let line = r.map_err(Error::ReadStdout)?;
-                    self.stdout.lock().write_all(&line).map_err(Error::Write)?;
+                    if let Some(line) = r.map_err(Error::ReadStdout)? {
+                        self.stdout.lock().write_all(&line).map_err(Error::Write)?;
+                    } else {
+                        stdout_eof = true;
+                    }
                     if self.stdout_is_tty {
                         self.statline.print()?;
                     }
                 }
-                r = self.perr.next_line() => {
+                r = self.perr.next_line(), if !stderr_eof => {
                     self.statline.clear()?;
-                    let line = r.map_err(Error::ReadStderr)?;
-                    self.stderr.lock().write_all(&line).map_err(Error::Write)?;
+                    if let Some(line) = r.map_err(Error::ReadStderr)? {
+                        self.stderr.lock().write_all(&line).map_err(Error::Write)?;
+                    } else {
+                        stderr_eof = true;
+                    }
                     self.statline.print()?;
                 }
-                r = self.p.wait() => {
+                r = self.p.wait(), if exit_code.is_none() => {
                     self.statline.clear()?;
                     let rc = r.map_err(Error::Wait)?;
                     if let Some(ret) = rc.code() {
                         let ret = u8::try_from(ret & 255).unwrap_or(1);
-                        return Ok(ExitCode::from(ret));
+                        exit_code = Some(ExitCode::from(ret));
                     } else {
                         return Err(Error::Signal(rc));
                     }
+                    self.statline.print()?;
                 }
                 r = tokio::signal::ctrl_c() => {
                     if r.is_ok() {
@@ -488,14 +504,14 @@ struct NextLine<'a, R> {
 }
 
 impl<R: AsyncRead + Unpin> Future for NextLine<'_, R> {
-    type Output = io::Result<Vec<u8>>;
+    type Output = io::Result<Option<Vec<u8>>>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         loop {
             if let Some(ln) = self.inner.get_line() {
-                return Poll::Ready(Ok(ln));
+                return Poll::Ready(Ok(Some(ln)));
             } else if self.inner.eof {
-                return Poll::Pending;
+                return Poll::Ready(Ok(None));
             } else {
                 let mut buf0 = vec![0u8; READ_BUFFER_SIZE];
                 let mut buf = ReadBuf::new(&mut buf0);
@@ -649,28 +665,32 @@ mod tests {
     mod byte_lines {
         use super::*;
         use std::io::Cursor;
-        use tokio_test::{assert_pending, io::Builder, task::spawn};
+        use tokio_test::io::Builder;
 
         #[tokio::test]
         async fn many_short_lines() {
             let reader = Cursor::new(b"Hello!\nI like your code.\nGoodbye!\n");
             let mut lines = ByteLines::new(reader);
-            assert_eq!(lines.next_line().await.unwrap(), b"Hello!\n");
-            assert_eq!(lines.next_line().await.unwrap(), b"I like your code.\n");
-            assert_eq!(lines.next_line().await.unwrap(), b"Goodbye!\n");
-            let mut fut = spawn(lines.next_line());
-            assert_pending!(fut.poll());
+            assert_eq!(lines.next_line().await.unwrap().unwrap(), b"Hello!\n");
+            assert_eq!(
+                lines.next_line().await.unwrap().unwrap(),
+                b"I like your code.\n"
+            );
+            assert_eq!(lines.next_line().await.unwrap().unwrap(), b"Goodbye!\n");
+            assert_eq!(lines.next_line().await.unwrap(), None);
         }
 
         #[tokio::test]
         async fn many_short_lines_no_final_newline() {
             let reader = Cursor::new(b"Hello!\nI like your code.\nGoodbye!");
             let mut lines = ByteLines::new(reader);
-            assert_eq!(lines.next_line().await.unwrap(), b"Hello!\n");
-            assert_eq!(lines.next_line().await.unwrap(), b"I like your code.\n");
-            assert_eq!(lines.next_line().await.unwrap(), b"Goodbye!");
-            let mut fut = spawn(lines.next_line());
-            assert_pending!(fut.poll());
+            assert_eq!(lines.next_line().await.unwrap().unwrap(), b"Hello!\n");
+            assert_eq!(
+                lines.next_line().await.unwrap().unwrap(),
+                b"I like your code.\n"
+            );
+            assert_eq!(lines.next_line().await.unwrap().unwrap(), b"Goodbye!");
+            assert_eq!(lines.next_line().await.unwrap(), None);
         }
 
         #[tokio::test]
@@ -681,21 +701,25 @@ mod tests {
                 .read(b"Bye now!\n")
                 .build();
             let mut lines = ByteLines::new(reader);
-            assert_eq!(lines.next_line().await.unwrap(), b"Hello, World!\n");
-            assert_eq!(lines.next_line().await.unwrap(), b"Bye now!\n");
-            let mut fut = spawn(lines.next_line());
-            assert_pending!(fut.poll());
+            assert_eq!(
+                lines.next_line().await.unwrap().unwrap(),
+                b"Hello, World!\n"
+            );
+            assert_eq!(lines.next_line().await.unwrap().unwrap(), b"Bye now!\n");
+            assert_eq!(lines.next_line().await.unwrap(), None);
         }
 
         #[tokio::test]
         async fn non_utf8() {
             let reader = Cursor::new(b"Hell\xF6!\nI like your code.\nGoodbye!\n");
             let mut lines = ByteLines::new(reader);
-            assert_eq!(lines.next_line().await.unwrap(), b"Hell\xF6!\n");
-            assert_eq!(lines.next_line().await.unwrap(), b"I like your code.\n");
-            assert_eq!(lines.next_line().await.unwrap(), b"Goodbye!\n");
-            let mut fut = spawn(lines.next_line());
-            assert_pending!(fut.poll());
+            assert_eq!(lines.next_line().await.unwrap().unwrap(), b"Hell\xF6!\n");
+            assert_eq!(
+                lines.next_line().await.unwrap().unwrap(),
+                b"I like your code.\n"
+            );
+            assert_eq!(lines.next_line().await.unwrap().unwrap(), b"Goodbye!\n");
+            assert_eq!(lines.next_line().await.unwrap(), None);
         }
 
         #[tokio::test]
@@ -703,10 +727,9 @@ mod tests {
             let reader = Cursor::new(b"Hello!\r\nGoodbye!\n");
             let mut lines = ByteLines::new(reader);
             lines.strip_cr = true;
-            assert_eq!(lines.next_line().await.unwrap(), b"Hello!\n");
-            assert_eq!(lines.next_line().await.unwrap(), b"Goodbye!\n");
-            let mut fut = spawn(lines.next_line());
-            assert_pending!(fut.poll());
+            assert_eq!(lines.next_line().await.unwrap().unwrap(), b"Hello!\n");
+            assert_eq!(lines.next_line().await.unwrap().unwrap(), b"Goodbye!\n");
+            assert_eq!(lines.next_line().await.unwrap(), None);
         }
     }
 }
