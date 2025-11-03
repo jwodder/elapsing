@@ -1,3 +1,8 @@
+v0.2.1 (in development)
+-----------------------
+- **Bugfix**: Ensure that all output from the child process is read & echoed
+  before exiting
+
 v0.2.0 (2025-11-02)
 -------------------
 - Added a `--format` option for setting the format of the status line
